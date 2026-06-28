@@ -199,3 +199,126 @@ export const models = [
     desc: 'Rich copper-red coloring with high gloss and deep volume curls.'
   }
 ]
+
+export const salons = [
+  {
+    id: 'aura-koramangala',
+    name: 'Aura Salon & Spa',
+    location: 'Koramangala',
+    coordinates: [12.9352, 77.6244],
+    stylistIds: ['aarav-mehta', 'priya-sharma'],
+    priceTier: '₹₹₹',
+    priceRange: '₹1,500 - ₹6,500',
+    rating: 4.9,
+    luxuryLevel: 'Ultra Luxury',
+    homeService: true,
+    services: [
+      { id: 'hc-royal', name: 'Royal Signature Haircut', price: 1500, category: 'Haircut' },
+      { id: 'bt-luxury', name: 'Luxury Beard Trim & Sculpt', price: 800, category: 'Barbering' },
+      { id: 'sv-royal', name: 'Royal Shave with Hot Towel', price: 1000, category: 'Barbering' },
+      { id: 'sp-detox', name: 'Premium Scalp Detox & Massage', price: 1800, category: 'Hair Spa' },
+      { id: 'by-bespoke', name: 'Couture Balayage & Styling', price: 6500, category: 'Coloring' },
+      { id: 'cl-global', name: 'Luxury Global Hair Color', price: 4500, category: 'Coloring' },
+      { id: 'st-bridal', name: 'Red Carpet Hair Design', price: 2500, category: 'Bridal' }
+    ],
+    amenities: ['Valet Parking', 'Free Wi-Fi', 'Complimentary Champagne', 'VIP Lounge'],
+    reviews: [
+      { author: 'Rohan Sen', text: 'Incredible experience, Priya\'s balayage is absolutely top notch! Best in Koramangala.', rating: 5, date: '2026-06-15' },
+      { author: 'Ananya Roy', text: 'Loved the royal signature haircut by Aarav. Highly recommend! The Champagne was a nice touch.', rating: 5, date: '2026-06-20' }
+    ]
+  },
+  {
+    id: 'vogue-indiranagar',
+    name: 'Vogue Artistry',
+    location: 'Indiranagar',
+    coordinates: [12.9784, 77.6408],
+    stylistIds: ['priya-sharma', 'vikram-singh'],
+    priceTier: '₹₹',
+    priceRange: '₹2,000 - ₹5,000',
+    rating: 4.8,
+    luxuryLevel: 'Premium',
+    homeService: false,
+    services: [
+      { id: 'by-bespoke', name: 'Couture Balayage & Styling', price: 6500, category: 'Coloring' },
+      { id: 'cl-global', name: 'Luxury Global Hair Color', price: 4500, category: 'Coloring' },
+      { id: 'kt-infusion', name: 'Vance Keratin Infusion', price: 5000, category: 'Hair Spa' },
+      { id: 'fc-gold', name: 'Gold Dust Dermal Glow Facial', price: 4000, category: 'Skincare' },
+      { id: 'fc-hydra', name: 'Hydra-Boost Intense Therapy', price: 3500, category: 'Skincare' }
+    ],
+    amenities: ['Free Wi-Fi', 'Aroma Therapy Rooms', 'Beverage Bar'],
+    reviews: [
+      { author: 'Siddharth M.', text: 'Great grooming service by Vikram. Very professional skin analyst.', rating: 5, date: '2026-06-18' },
+      { author: 'Meera Iyer', text: 'Loved the global color by Priya. Great ambiance but a bit hard to find parking.', rating: 4, date: '2026-06-22' }
+    ]
+  },
+  {
+    id: 'royale-whitefield',
+    name: 'The Royale Grooming',
+    location: 'Whitefield',
+    coordinates: [12.9698, 77.7500],
+    stylistIds: ['kabir-malhotra', 'vikram-singh'],
+    priceTier: '₹₹₹',
+    priceRange: '₹1,200 - ₹4,000',
+    rating: 4.7,
+    luxuryLevel: 'Ultra Luxury',
+    homeService: true,
+    services: [
+      { id: 'bb-haircut', name: 'Royal Scissor Haircut', price: 1200, category: 'Haircut' },
+      { id: 'bb-shave', name: 'Classic Hot Towel Shave', price: 700, category: 'Barbering' },
+      { id: 'bb-groom', name: 'Luxury Beard Grooming & Trim', price: 600, category: 'Barbering' },
+      { id: 'bb-massage', name: 'Head Acupressure & Spa Massage', price: 1100, category: 'Hair Spa' },
+      { id: 'fc-gold', name: 'Gold Dust Dermal Glow Facial', price: 4000, category: 'Skincare' }
+    ],
+    amenities: ['Valet Parking', 'Private Cabins', 'Massage Chairs'],
+    reviews: [
+      { author: 'Varun Nair', text: 'The classic hot shave by Kabir is the best in Bangalore. Felt like royalty.', rating: 5, date: '2026-06-10' },
+      { author: 'Nisha K.', text: 'Very calming skin facial treatments by Vikram. The massage chairs are incredibly relaxing.', rating: 4, date: '2026-06-14' }
+    ]
+  },
+  {
+    id: 'nail-jayanagar',
+    name: 'Nail Couture & Lash Studio',
+    location: 'Jayanagar',
+    coordinates: [12.9307, 77.5824],
+    stylistIds: ['ananya-sen', 'meera-iyer'],
+    priceTier: '₹',
+    priceRange: '₹1,500 - ₹3,000',
+    rating: 4.9,
+    luxuryLevel: 'Premium',
+    homeService: false,
+    services: [
+      { id: 'nl-gelart', name: 'Bespoke Handpainted Gel Art', price: 2200, category: 'Nails' },
+      { id: 'nl-extend', name: 'Full Set Gel Nail Extensions', price: 3000, category: 'Nails' },
+      { id: 'ls-russian', name: 'Premium Russian Lash Extensions', price: 4500, category: 'Lashes' },
+      { id: 'nl-spa', name: 'Luxurious Paraffin Hand & Arm Spa', price: 1500, category: 'Nails' }
+    ],
+    amenities: ['Free Wi-Fi', 'Complimentary Coffee', 'Nail Bar Lounge'],
+    reviews: [
+      { author: 'Deepika Rao', text: 'Ananya is an absolute artist! My custom gel nail extensions look stunning. Got so many compliments.', rating: 5, date: '2026-06-08' },
+      { author: 'Sneha Hegde', text: 'Incredible paraffin spa treatment by Meera. The studio smells lovely.', rating: 5, date: '2026-06-12' }
+    ]
+  },
+  {
+    id: 'elixir-sadashivanagar',
+    name: 'Elixir Wellness',
+    location: 'Sadashivanagar',
+    coordinates: [13.0068, 77.5813],
+    stylistIds: ['meera-iyer', 'aarav-mehta'],
+    priceTier: '₹₹₹',
+    priceRange: '₹1,500 - ₹3,200',
+    rating: 4.9,
+    luxuryLevel: 'Ultra Luxury',
+    homeService: true,
+    services: [
+      { id: 'sp-oil', name: 'Organic Essential Oil Hair Spa', price: 2800, category: 'Hair Spa' },
+      { id: 'sp-fall', name: 'Anti-Hairfall Treatment Ritual', price: 3200, category: 'Hair Spa' },
+      { id: 'sp-dand', name: 'Dandruff Rebalancing Treatment', price: 2500, category: 'Hair Spa' },
+      { id: 'hc-royal', name: 'Royal Signature Haircut', price: 1500, category: 'Haircut' }
+    ],
+    amenities: ['Valet Parking', 'Organic Tea Service', 'Steam & Sauna access'],
+    reviews: [
+      { author: 'Karan J.', text: 'Meera\'s scalp therapy is so relaxing. I almost fell asleep! The organic tea they serve is delicious.', rating: 5, date: '2026-06-19' },
+      { author: 'Pooja Bhat', text: 'Excellent precision haircut by Aarav. Extremely clean salon and very professional.', rating: 5, date: '2026-06-25' }
+    ]
+  }
+]

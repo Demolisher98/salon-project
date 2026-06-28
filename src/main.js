@@ -1,27 +1,76 @@
 import './style.css'
-import { stylists, models } from './data.js'
+import { stylists, models, salons } from './data.js'
 import salonHero from './assets/salon_hero.png'
 
 // Application State
 const state = {
-  activeView: 'landing', // 'landing' | 'stylists' | 'models' | 'bookings'
+  activeView: 'landing', // 'landing' | 'salons' | 'stylists' | 'models' | 'bookings' | 'compare'
+  salons: JSON.parse(localStorage.getItem('bl_salons')) || salons,
   bookings: JSON.parse(localStorage.getItem('bl_bookings')) || [],
-  selectedStylist: null,
+  favorites: JSON.parse(localStorage.getItem('bl_favorites')) || [],
+  compareList: JSON.parse(localStorage.getItem('bl_compare')) || [],
+  
+  // Modal / Detail States
   isModalOpen: false,
-  currentStep: 1, // 0: Select Stylist (Direct Booking), 1: Select Services, 2: Date/Time/Form, 3: Success Ticket
+  modalType: 'booking', // 'booking' | 'salon-details' | 'stylist-details'
+  selectedSalonDetail: null,
+  selectedStylistDetail: null,
+
+  // Booking Wizard States
+  currentStep: -1, // -1: Select Salon, 0: Select Stylist, 1: Select Services, 2: Date/Time/Form, 3: Success Ticket
+  selectedSalon: null,
+  selectedStylist: null,
   selectedServices: [],
   selectedDate: null,
   selectedTime: null,
   calendarDate: new Date(),
-  latestBooking: null
+  latestBooking: null,
+
+  // UI Interactive States
+  aiMatchOutput: null,
+  chatbotOpen: false,
+  chatbotUnread: true,
+  chatbotMessages: [
+    { sender: 'bot', text: 'Welcome to Bangalore Luxury. I am Aura, your AI beauty concierge. How can I guide your styling journey today? Ask me about face shape cuts, bridal packages, or budget services!' }
+  ],
+  activeFormRating: 5
 }
 
-// Save bookings to localStorage
-function saveBookings() {
-  localStorage.setItem('bl_bookings', JSON.stringify(state.bookings))
+// Map reference for Leaflet
+let leafletMap = null
+
+// Persist state helpers
+function saveState(key, data) {
+  localStorage.setItem(key, JSON.stringify(data))
 }
 
-// Generate a random ticket code
+function toggleFavorite(salonId) {
+  const idx = state.favorites.indexOf(salonId)
+  if (idx > -1) {
+    state.favorites.splice(idx, 1)
+  } else {
+    state.favorites.push(salonId)
+  }
+  saveState('bl_favorites', state.favorites)
+  renderApp()
+}
+
+function toggleCompare(salonId) {
+  const idx = state.compareList.indexOf(salonId)
+  if (idx > -1) {
+    state.compareList.splice(idx, 1)
+  } else {
+    if (state.compareList.length >= 3) {
+      alert('You can compare a maximum of 3 salons side-by-side.')
+      return
+    }
+    state.compareList.push(salonId)
+  }
+  saveState('bl_compare', state.compareList)
+  renderApp()
+}
+
+// Generate booking ticket code
 function generateTicketCode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
   let code = 'BL-'
@@ -34,7 +83,7 @@ function generateTicketCode() {
 // DOM Elements
 const app = document.querySelector('#app')
 
-// Helper for UI icons
+// Custom icons
 const icons = {
   star: `<svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>`,
   specialty: `<svg viewBox="0 0 24 24"><path d="M9 11.75c-.41 0-.75-.34-.75-.75s.34-.75.75-.75.75.34.75.75-.34.75-.75.75zm9 0c-.41 0-.75-.34-.75-.75s.34-.75.75-.75.75.34.75.75-.34.75-.75.75zm-4.5 0c-.41 0-.75-.34-.75-.75s.34-.75.75-.75.75.34.75.75-.34.75-.75.75zM22 12c0-5.52-4.48-10-10-10S2 6.48 2 12c0 4.84 3.44 8.87 8 9.8V15H8v-3h2V9.5C10 7.57 11.57 6 13.5 6H16v3h-2c-.55 0-1 .45-1 1v2h3v3h-3v6.8c4.56-.93 8-4.96 8-9.8z"/></svg>`,
@@ -42,10 +91,15 @@ const icons = {
   clock: `<svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>`,
   user: `<svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`,
   trash: `<svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`,
-  scissorsLogo: `<svg viewBox="0 0 24 24"><path d="M9.64 7.64c.23-.5.36-1.05.36-1.64C10 3.79 8.21 2 6 2S2 3.79 2 6s1.79 4 4 4c.59 0 1.14-.13 1.64-.36L10 12l-2.36 2.36C7.14 14.13 6.59 14 6 14c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4c0-.59-.13-1.14-.36-1.64L12 14l2.36 2.36c-.23.5-.36 1.05-.36 1.64 0 2.21 1.79 4 4 4s4-1.79 4-4-1.79-4-4-4c-.59 0-1.14.13-1.64.36L14 12l2.36-2.36c.5.23 1.05.36 1.64.36 2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4c0 .59.13 1.14.36 1.64L12 10l-2.36-2.36zM6 8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm12 12c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM6 18c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM18 6c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z"/></svg>`
+  scissorsLogo: `<svg viewBox="0 0 24 24"><path d="M9.64 7.64c.23-.5.36-1.05.36-1.64C10 3.79 8.21 2 6 2S2 3.79 2 6s1.79 4 4 4c.59 0 1.14-.13 1.64-.36L10 12l-2.36 2.36C7.14 14.13 6.59 14 6 14c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4c0-.59-.13-1.14-.36-1.64L12 14l2.36 2.36c-.23.5-.36 1.05-.36 1.64 0 2.21 1.79 4 4 4s4-1.79 4-4-1.79-4-4-4c-.59 0-1.14.13-1.64.36L14 12l2.36-2.36c.5.23 1.05.36 1.64.36 2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4c0 .59.13 1.14.36 1.64L12 10l-2.36-2.36zM6 8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm12 12c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM6 18c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM18 6c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z"/></svg>`,
+  sparkles: `<svg viewBox="0 0 24 24"><path d="M12 2L10.5 8.5L4 10L10.5 11.5L12 18L13.5 11.5L20 10L13.5 8.5L12 2Z M19 17l-1 4.5l-3.5-1l3.5-1.5L19 14l1.5 3.5L24 19l-4.5 1L19 17Z M5.5 14L5 17.5L2 19L5 20l0.5 3.5L7 20.5L10 19L7 17.5L5.5 14Z"/></svg>`,
+  heart: `<svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>`,
+  mapPin: `<svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>`
 }
 
+// ----------------------------------------------------
 // Main Render Loop
+// ----------------------------------------------------
 function renderApp() {
   app.innerHTML = `
     <!-- Glow Blobs for Liquid Design -->
@@ -61,6 +115,7 @@ function renderApp() {
       <button class="menu-btn" id="menu-btn" aria-label="Toggle Menu">&#9776;</button>
       <ul class="nav-links" id="nav-links">
         <li class="nav-link ${state.activeView === 'landing' ? 'active' : ''}" id="nav-home">Home</li>
+        <li class="nav-link ${state.activeView === 'salons' ? 'active' : ''}" id="nav-salons">Salons</li>
         <li class="nav-link ${state.activeView === 'stylists' ? 'active' : ''}" id="nav-stylists">Stylists</li>
         <li class="nav-link ${state.activeView === 'models' ? 'active' : ''}" id="nav-models">Models</li>
         <li class="nav-link" id="nav-book-shortcut">Book Experience</li>
@@ -72,6 +127,44 @@ function renderApp() {
     <main>
       ${renderActiveView()}
     </main>
+
+    <!-- Floating AI Beauty Chatbot FAB -->
+    <div class="chatbot-fab" id="chatbot-fab">
+      ${state.chatbotUnread ? `<div class="chatbot-badge"></div>` : ''}
+      ${icons.sparkles}
+    </div>
+
+    <!-- Chatbot Window panel -->
+    <div class="chatbot-panel glass-panel ${state.chatbotOpen ? 'open' : ''}" id="chatbot-panel">
+      <div class="chatbot-header">
+        <div class="chatbot-title-box">
+          ${icons.sparkles}
+          <div>
+            <h3 class="chatbot-title">Aura AI</h3>
+            <span class="chatbot-status">Beauty Concierge</span>
+          </div>
+        </div>
+        <button class="chatbot-close" id="chatbot-close">&times;</button>
+      </div>
+      <div class="chatbot-chat-log" id="chatbot-chat-log">
+        ${state.chatbotMessages.map(msg => `
+          <div class="chat-bubble ${msg.sender === 'bot' ? 'chat-bubble-bot' : 'chat-bubble-user'}">
+            ${msg.text}
+          </div>
+        `).join('')}
+      </div>
+      <div class="chat-shortcuts">
+        <button class="chat-shortcut-btn" data-query="Which hairstyle suits a round face shape?">Round Face styles</button>
+        <button class="chat-shortcut-btn" data-query="Suggest salons with home service under ₹3000.">Home Service under ₹3k</button>
+        <button class="chat-shortcut-btn" data-query="Bridal styling recommendations.">Bridal makeup</button>
+      </div>
+      <div class="chatbot-input-bar">
+        <input type="text" class="chatbot-input" id="chatbot-input" placeholder="Ask Aura about styling, salons..." autocomplete="off">
+        <button class="chatbot-send-btn" id="chatbot-send-btn">
+          <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </div>
+    </div>
 
     <!-- Dynamic Modal Drawer for details and booking -->
     <div class="modal-overlay" id="modal-overlay">
@@ -85,25 +178,34 @@ function renderApp() {
   `
 
   attachGlobalEventListeners()
+
+  // Initialize Leaflet Map if active view is salons
+  if (state.activeView === 'salons') {
+    initLeafletMap()
+  }
 }
 
 function renderActiveView() {
   switch (state.activeView) {
     case 'landing':
       return renderLandingView()
+    case 'salons':
+      return renderSalonsView()
     case 'stylists':
       return renderStylistsView()
     case 'models':
       return renderModelsView()
     case 'bookings':
       return renderBookingsView()
+    case 'compare':
+      return renderCompareView()
     default:
       return renderLandingView()
   }
 }
 
 // ----------------------------------------------------
-// Landing View (Entire page dedicated to title showing)
+// Landing View (Cover Title Screen)
 // ----------------------------------------------------
 function renderLandingView() {
   return `
@@ -111,15 +213,392 @@ function renderLandingView() {
       <div class="landing-bg" style="background-image: url('${salonHero}');"></div>
       <div class="landing-overlay"></div>
       <div class="landing-content">
-        <h4 class="landing-subtitle">Couture Beauty House</h4>
+        <h4 class="landing-subtitle">Couture Beauty & Spa Marketplace</h4>
         <h1 class="landing-title">Bangalore Luxury</h1>
-        <p class="landing-desc">Step into Bangalore's premier salon sanctuary. Experience unparalleled hair sculpting, custom color formulations, and rejuvenating dermal therapies curated by our award-winning artisans.</p>
+        <p class="landing-desc">Discover and secure reservations at Bangalore's finest, ultra-premium salons. Compare prices, explore portfolios, and secure customized sequences with award-winning style craftsmen.</p>
         <div class="landing-actions">
-          <button class="btn-primary" id="landing-explore-btn">Meet Our Stylists</button>
-          <button class="btn-glass" id="landing-book-btn">Reserve Appointment</button>
+          <button class="btn-primary" id="landing-explore-btn">Browse Marketplace</button>
+          <button class="btn-glass" id="landing-book-btn">Book Premium Service</button>
         </div>
       </div>
     </section>
+  `
+}
+
+// ----------------------------------------------------
+// Salons Marketplace View (with filters, map & AI match)
+// ----------------------------------------------------
+function renderSalonsView() {
+  // Check localStorage for filters
+  const searchVal = state.filterSearch || ''
+  const locVal = state.filterLocation || ''
+  const priceVal = state.filterPrice || ''
+  const serviceVal = state.filterService || ''
+  const homeVal = state.filterHome || ''
+
+  // Filter salons
+  const filteredSalons = state.salons.filter(s => {
+    // Search match
+    if (searchVal && !s.name.toLowerCase().includes(searchVal.toLowerCase()) && !s.location.toLowerCase().includes(searchVal.toLowerCase())) {
+      return false
+    }
+    // Location match
+    if (locVal && s.location !== locVal) return false
+    // Price match
+    if (priceVal && s.priceTier !== priceVal) return false
+    // Home Service match
+    if (homeVal && String(s.homeService) !== homeVal) return false
+    // Service category match
+    if (serviceVal) {
+      const hasCat = s.services.some(svc => svc.category.toLowerCase() === serviceVal.toLowerCase())
+      if (!hasCat) return false
+    }
+    return true
+  })
+
+  // Extract unique locations and categories for filter select options
+  const locations = [...new Set(state.salons.map(s => s.location))]
+  const categories = ['Haircut', 'Coloring', 'Barbering', 'Skincare', 'Hair Spa', 'Nails', 'Lashes']
+
+  return `
+    <div class="section-container" style="padding-top: 30px;">
+      <div class="section-header">
+        <h4 class="section-subtitle">Elite Salon Network</h4>
+        <h2 class="section-title">Luxury Marketplace</h2>
+      </div>
+
+      <!-- Compare Selected Salons Floating Bar -->
+      ${state.compareList.length > 0 ? `
+        <div class="compare-bar glass-panel">
+          <span class="compare-bar-text"><strong>${state.compareList.length}</strong> salon(s) selected for comparison (Max 3).</span>
+          <button class="btn-primary" style="padding: 10px 24px; font-size: 0.8rem;" id="compare-bar-btn">Compare Salons</button>
+        </div>
+      ` : ''}
+
+      <!-- AI Recommendation System Panel -->
+      <div class="ai-match-box glass-panel">
+        <h3 class="ai-match-title">
+          ${icons.sparkles}
+          <span>AI Salon Matchmaker</span>
+        </h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Describe your styling requirements (e.g., "Bridal makeup under ₹5000 in Koramangala") and our AI recommends the perfect salon.</p>
+        <div class="ai-match-input-group">
+          <textarea class="ai-match-textarea" id="ai-match-textarea" placeholder="Describe budget, services, location, home service needs..."></textarea>
+          <button class="btn-ai-match" id="ai-match-submit-btn">Match</button>
+        </div>
+        <div class="ai-recommendations-output" id="ai-match-output-container">
+          ${renderAiRecommendations()}
+        </div>
+      </div>
+
+      <!-- Search & Filters Row -->
+      <div class="marketplace-filters glass-panel">
+        <div class="filters-row">
+          <div class="search-wrapper">
+            <input type="text" class="search-input" id="search-input" placeholder="Search salons by name or area..." value="${searchVal}">
+            <span class="search-icon">
+              <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            </span>
+          </div>
+          
+          <select class="filter-select" id="filter-location">
+            <option value="">All Locations</option>
+            ${locations.map(l => `<option value="${l}" ${locVal === l ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+          
+          <select class="filter-select" id="filter-price">
+            <option value="">All Budgets</option>
+            <option value="₹" ${priceVal === '₹' ? 'selected' : ''}>Moderate (₹)</option>
+            <option value="₹₹" ${priceVal === '₹₹' ? 'selected' : ''}>Premium (₹₹)</option>
+            <option value="₹₹₹" ${priceVal === '₹₹₹' ? 'selected' : ''}>Ultra Luxury (₹₹₹)</option>
+          </select>
+          
+          <select class="filter-select" id="filter-service">
+            <option value="">All Services</option>
+            ${categories.map(c => `<option value="${c}" ${serviceVal === c ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+          
+          <select class="filter-select" id="filter-home">
+            <option value="">Home Service?</option>
+            <option value="true" ${homeVal === 'true' ? 'selected' : ''}>Available</option>
+            <option value="false" ${homeVal === 'false' ? 'selected' : ''}>Salon Only</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Main Marketplace Body (Split Grid & Map) -->
+      <div style="display: grid; grid-template-columns: 1.8fr 1.2fr; gap: 30px; margin-bottom: 40px;" id="marketplace-grid-layout">
+        <!-- Salons Grid List -->
+        <div>
+          <div class="salon-grid" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+            ${filteredSalons.length === 0 ? `<div style="grid-column: span 2; text-align: center; padding: 40px;">No salons match your search criteria.</div>` : filteredSalons.map(s => renderSalonCard(s)).join('')}
+          </div>
+        </div>
+
+        <!-- Sticky Interactive Map Column -->
+        <div style="position: sticky; top: 110px; height: 500px;" id="map-sticky-col">
+          <div class="map-section">
+            <div id="map"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderSalonCard(salon) {
+  const isFav = state.favorites.includes(salon.id)
+  const isCompareChecked = state.compareList.includes(salon.id)
+
+  return `
+    <div class="salon-card glass-panel">
+      <!-- Heart Wishlist button -->
+      <div class="btn-favorite ${isFav ? 'active' : ''}" data-salon-id="${salon.id}">
+        ${icons.heart}
+      </div>
+
+      <div class="salon-img-container">
+        <!-- Render salon banner or placeholder interior -->
+        <img src="${salonHero}" alt="${salon.name}">
+        <div class="salon-img-overlay"></div>
+        <div class="stylist-rating-badge">
+          ${icons.star}
+          <span>${salon.rating.toFixed(1)}</span>
+        </div>
+      </div>
+
+      <div class="salon-info">
+        <div>
+          <div class="salon-name-row">
+            <h3 class="salon-name">${salon.name}</h3>
+          </div>
+          <p class="salon-area">${salon.location}</p>
+          <div class="salon-meta-tags">
+            <span class="salon-tag">${salon.luxuryLevel}</span>
+            ${salon.homeService ? `<span class="salon-tag-premium">Home Service</span>` : `<span class="salon-tag">Salon Only</span>`}
+          </div>
+        </div>
+        <div>
+          <div class="salon-footer-row">
+            <span class="salon-price">${salon.priceRange}</span>
+            <button class="btn-glass btn-salon-explore" data-salon-id="${salon.id}" style="padding: 8px 16px; font-size: 0.75rem;">Explore</button>
+          </div>
+          
+          <!-- Compare checkbox -->
+          <label class="compare-card-checkbox">
+            <input type="checkbox" class="compare-checkbox" data-salon-compare-id="${salon.id}" ${isCompareChecked ? 'checked' : ''}>
+            Compare Salon
+          </label>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+// ----------------------------------------------------
+// AI Recommendation Output Generator
+// ----------------------------------------------------
+function renderAiRecommendations() {
+  if (!state.aiMatchOutput) return ''
+
+  return state.aiMatchOutput.map(rec => `
+    <div class="ai-rec-card glass-panel">
+      <div class="ai-rec-header">
+        <h4 class="ai-rec-name">${rec.name} (${rec.location})</h4>
+        <p class="ai-rec-reason">${rec.reason}</p>
+      </div>
+      <button class="btn-primary btn-salon-explore" data-salon-id="${rec.id}" style="padding: 10px 18px; font-size: 0.78rem;">Book Salon</button>
+    </div>
+  `).join('')
+}
+
+function processAiMatching(queryText) {
+  const norm = queryText.toLowerCase()
+  if (!norm.trim()) {
+    state.aiMatchOutput = null
+    renderApp()
+    return
+  }
+
+  const results = []
+
+  // Check matching criteria
+  state.salons.forEach(s => {
+    let score = 0
+    let reasonParts = []
+
+    // 1. Location match
+    if (norm.includes(s.location.toLowerCase())) {
+      score += 3
+      reasonParts.push(`Located in ${s.location}.`)
+    }
+
+    // 2. Budget/Price Tier match
+    // Extract numbers to match budget
+    const numbers = norm.match(/\d+/g)
+    if (numbers) {
+      const budget = Math.max(...numbers.map(Number))
+      // Get cheapest service
+      const minPrice = Math.min(...s.services.map(svc => svc.price))
+      if (minPrice <= budget) {
+        score += 2
+        reasonParts.push(`Fits your budget (Services start at ₹${minPrice.toLocaleString()}).`)
+      } else {
+        score -= 2 // Penalize if lowest service is higher than budget
+      }
+    }
+
+    // 3. Service matches
+    const serviceKeywords = {
+      'haircut': ['haircut', 'cut', 'trim', 'fringe', 'crop', 'styling'],
+      'coloring': ['color', 'dye', 'balayage', 'highlights', 'blonde', 'tint'],
+      'barbering': ['shave', 'beard', 'razor', 'hot towel', 'barber'],
+      'skincare': ['skincare', 'facial', 'glow', 'hydrate', 'dermal', 'face pack'],
+      'hair spa': ['spa', 'scalp', 'detox', 'massage', 'acupressure', 'conditioning'],
+      'nails': ['nail', 'manicure', 'pedicure', 'acrylic', 'extensions'],
+      'lashes': ['lash', 'eyelash', 'lashes', 'extensions']
+    }
+
+    let serviceMatched = false
+    Object.keys(serviceKeywords).forEach(cat => {
+      const matchedWord = serviceKeywords[cat].find(word => norm.includes(word))
+      if (matchedWord) {
+        const hasSvc = s.services.some(svc => svc.category.toLowerCase() === cat)
+        if (hasSvc) {
+          score += 3
+          serviceMatched = true
+          reasonParts.push(`Provides premium ${cat} treatments.`)
+        }
+      }
+    })
+
+    // 4. Home Service match
+    if (norm.includes('home') || norm.includes('visit') || norm.includes('doorstep') || norm.includes('house')) {
+      if (s.homeService) {
+        score += 4
+        reasonParts.push(`Offers certified at-home treatment services!`)
+      }
+    }
+
+    // 5. Rating/Best match
+    if (norm.includes('best') || norm.includes('top') || norm.includes('rating') || norm.includes('star')) {
+      if (s.rating >= 4.8) {
+        score += 1
+        reasonParts.push(`Highly rated (${s.rating} Stars) by verified customers.`)
+      }
+    }
+
+    // If matches any main keyword, add to recommendations
+    if (score > 1) {
+      results.push({
+        id: s.id,
+        name: s.name,
+        location: s.location,
+        reason: reasonParts.join(' ') || `Provides high-quality premium treatments in ${s.location}.`,
+        score: score
+      })
+    }
+  })
+
+  // Sort by score descending
+  results.sort((a, b) => b.score - a.score)
+  
+  // Set results (take top 2)
+  state.aiMatchOutput = results.slice(0, 2)
+  
+  if (state.aiMatchOutput.length === 0) {
+    state.aiMatchOutput = [{
+      id: state.salons[0].id,
+      name: state.salons[0].name,
+      location: state.salons[0].location,
+      reason: 'No exact matches found. Recommending our flagship Koramangala retreat based on our elite ratings.'
+    }]
+  }
+
+  renderApp()
+}
+
+// ----------------------------------------------------
+// Compare Salons View
+// ----------------------------------------------------
+function renderCompareView() {
+  const salonsToCompare = state.salons.filter(s => state.compareList.includes(s.id))
+
+  return `
+    <div class="section-container compare-container">
+      <div class="section-header">
+        <h4 class="section-subtitle">Side-By-Side Comparison</h4>
+        <h2 class="section-title">Compare Salon Offerings</h2>
+      </div>
+
+      <div style="margin-bottom: 25px;">
+        <button class="btn-glass" id="compare-back-btn">&larr; Back to Marketplace</button>
+      </div>
+
+      ${salonsToCompare.length === 0 ? `
+        <div class="no-bookings glass-panel">
+          <p>No salons selected for comparison. Return to the marketplace to select salons.</p>
+        </div>
+      ` : `
+        <div class="compare-table-wrapper">
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th class="feature-name">Features</th>
+                ${salonsToCompare.map(s => `<th>${s.name}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="feature-name">Location Area</td>
+                ${salonsToCompare.map(s => `<td>${s.location}</td>`).join('')}
+              </tr>
+              <tr>
+                <td class="feature-name">Verified Rating</td>
+                ${salonsToCompare.map(s => `
+                  <td>
+                    <div style="display:flex; align-items:center; gap:5px; color: var(--accent-gold);">
+                      ${icons.star}
+                      <strong>${s.rating.toFixed(1)}</strong>
+                    </div>
+                  </td>
+                `).join('')}
+              </tr>
+              <tr>
+                <td class="feature-name">Price Tier</td>
+                ${salonsToCompare.map(s => `<td><strong style="color: var(--accent-gold);">${s.priceTier}</strong> (${s.priceRange})</td>`).join('')}
+              </tr>
+              <tr>
+                <td class="feature-name">Luxury Grade</td>
+                ${salonsToCompare.map(s => `<td>${s.luxuryLevel}</td>`).join('')}
+              </tr>
+              <tr>
+                <td class="feature-name">Home Service?</td>
+                ${salonsToCompare.map(s => `<td>${s.homeService ? '✅ Available' : '❌ Salon Only'}</td>`).join('')}
+              </tr>
+              <tr>
+                <td class="feature-name">Amenities</td>
+                ${salonsToCompare.map(s => `
+                  <td>
+                    <div style="display:flex; flex-wrap:wrap; gap:5px;">
+                      ${s.amenities.map(a => `<span class="skill-tag" style="font-size:0.7rem; padding: 4px 8px;">${a}</span>`).join('')}
+                    </div>
+                  </td>
+                `).join('')}
+              </tr>
+              <tr>
+                <td class="feature-name">Action</td>
+                ${salonsToCompare.map(s => `
+                  <td>
+                    <button class="btn-primary btn-compare-book" data-salon-id="${s.id}" style="padding: 10px 20px; font-size: 0.8rem;">Book Salon</button>
+                  </td>
+                `).join('')}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `}
+    </div>
   `
 }
 
@@ -225,7 +704,7 @@ function renderNoBookings() {
         <svg viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2zm-7 3h5v5h-5z"/></svg>
       </div>
       <h3>No Engagements Found</h3>
-      <p>No active reservations are scheduled. Book an indulgence with our master stylists today.</p>
+      <p>No active reservations are scheduled. Book an indulgence at our marketplace salons today.</p>
       <button class="btn-primary" id="bookings-book-btn">Schedule Appointment</button>
     </div>
   `
@@ -253,6 +732,10 @@ function renderBookingCard(booking, index) {
       </div>
       <div class="booking-card-details">
         <div class="booking-card-detail">
+          ${icons.mapPin}
+          <span>Salon: <strong>${booking.salonName}</strong> (${booking.salonArea})</span>
+        </div>
+        <div class="booking-card-detail">
           ${icons.calendar}
           <span>${formattedDate}</span>
         </div>
@@ -276,16 +759,22 @@ function renderBookingCard(booking, index) {
 }
 
 // ----------------------------------------------------
-// Modal Drawer Rendering (Details & Scheduling Wizard)
+// Modal Drawer Selector (Dynamic Wizard vs Salon Details View)
 // ----------------------------------------------------
 function renderModalContent() {
+  if (state.modalType === 'salon-details') {
+    return renderSalonDetailsModal()
+  }
+  
+  // Otherwise render Booking Wizard flow
   const stylist = state.selectedStylist
   const isDirectBookingStylistSelection = state.currentStep === 0
+  const isDirectBookingSalonSelection = state.currentStep === -1
 
   return `
     <div class="modal-body">
-      <!-- Left Profile Pane (Hide in Step 0 or Success Screen) -->
-      ${(state.currentStep !== 3 && stylist) ? `
+      <!-- Left Profile Pane (Hide in Step -1, 0, or Success Screen) -->
+      ${(state.currentStep !== 3 && stylist && !isDirectBookingStylistSelection && !isDirectBookingSalonSelection) ? `
         <div class="modal-profile-section">
           <div class="modal-profile-img">
             <img src="${stylist.image}" alt="${stylist.name}">
@@ -311,26 +800,189 @@ function renderModalContent() {
       ` : ''}
 
       <!-- Right Selection/Details Pane -->
-      <div class="modal-details-section" style="${(state.currentStep === 3 || isDirectBookingStylistSelection) ? 'grid-column: span 2;' : ''}">
+      <div class="modal-details-section" style="${(state.currentStep === 3 || isDirectBookingStylistSelection || isDirectBookingSalonSelection) ? 'grid-column: span 2;' : ''}">
         ${renderWizardStep()}
       </div>
     </div>
   `
 }
 
+// ----------------------------------------------------
+// Salon Details Modal View (including reviews form & list)
+// ----------------------------------------------------
+function renderSalonDetailsModal() {
+  const salon = state.selectedSalonDetail
+  if (!salon) return ''
+
+  // Get associated stylists
+  const salonStylists = stylists.filter(s => salon.stylistIds.includes(s.id))
+
+  return `
+    <div class="modal-body" style="grid-template-columns: 1fr;">
+      <div class="modal-details-section" style="grid-column: span 2; padding: 40px;">
+        <div class="modal-details-header" style="margin-bottom: 25px;">
+          <h2 style="font-family: var(--font-serif); color: var(--accent-gold); font-size: 2.1rem; margin-bottom: 5px;">${salon.name}</h2>
+          <p style="text-transform: uppercase; font-size: 0.85rem; letter-spacing: 0.1em; color: var(--accent-gold); margin-bottom: 8px;">${salon.location} Area</p>
+          <div style="display:flex; align-items:center; gap: 8px;">
+            <div class="stylist-rating-badge" style="position:static; padding: 4px 10px;">
+              ${icons.star}
+              <span>${salon.rating.toFixed(1)}</span>
+            </div>
+            <span style="font-size: 0.85rem; color: var(--text-muted);">${salon.luxuryLevel} Grade</span>
+            <span style="color: var(--accent-gold);">|</span>
+            <span style="font-size: 0.85rem; color: var(--text-muted);">${salon.homeService ? 'Home Service Available' : 'Salon-Only Service'}</span>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 40px; margin-bottom: 35px;" id="salon-details-layout">
+          <!-- Left side details -->
+          <div>
+            <h3 style="font-size: 1.2rem; color: var(--accent-gold); margin-bottom: 12px; font-family: var(--font-serif);">Premium Amenities Available</h3>
+            <div style="display:flex; flex-wrap:wrap; gap: 8px; margin-bottom: 30px;">
+              ${salon.amenities.map(a => `<span class="skill-tag" style="font-size: 0.8rem; padding: 6px 12px;">${a}</span>`).join('')}
+            </div>
+
+            <h3 style="font-size: 1.2rem; color: var(--accent-gold); margin-bottom: 12px; font-family: var(--font-serif);">Salon Stylist Artisans</h3>
+            <div style="display:flex; flex-direction:column; gap: 12px; margin-bottom: 30px;">
+              ${salonStylists.map(s => `
+                <div class="stylist-select-item glass-panel" style="padding: 12px 18px; pointer-events: none;">
+                  <div style="display:flex; align-items:center; gap: 12px;">
+                    <img src="${s.image}" style="width: 42px; height: 42px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent-gold);">
+                    <div>
+                      <h4 style="font-size: 0.95rem; font-weight: 600;">${s.name}</h4>
+                      <p style="font-size: 0.75rem; color: var(--accent-gold);">${s.role}</p>
+                    </div>
+                  </div>
+                  <div class="stylist-select-rating">
+                    ${icons.star}
+                    <span>${s.rating.toFixed(1)}</span>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+
+            <!-- Booking CTA -->
+            <button class="btn-primary btn-full" id="salon-details-book-btn" data-salon-id="${salon.id}">
+              Schedule Experience Here
+            </button>
+          </div>
+
+          <!-- Right side Map Iframe (or coordinates display) -->
+          <div>
+            <h3 style="font-size: 1.2rem; color: var(--accent-gold); margin-bottom: 12px; font-family: var(--font-serif);">Google Maps Location</h3>
+            <div style="width:100%; height:250px; border-radius:12px; border: 1px solid var(--glass-border); overflow:hidden;">
+              <iframe 
+                width="100%" 
+                height="100%" 
+                frameborder="0" 
+                style="border:0;" 
+                src="https://www.google.com/maps/embed/v1/place?key=MOCK_MAP_API_KEY&q=${encodeURIComponent(salon.name + ' ' + salon.location + ' Bangalore')}&zoom=14" 
+                allowfullscreen>
+              </iframe>
+              <!-- Since it is a mock key, it displays a fallback message, which is perfect and realistic -->
+            </div>
+            <p style="font-size:0.75rem; color: var(--text-muted); margin-top:8px; text-align:center;">Coordinates: ${salon.coordinates[0]}, ${salon.coordinates[1]}</p>
+          </div>
+        </div>
+
+        <!-- Verified Reviews/Testimonials Sub-Module -->
+        <div class="reviews-container">
+          <div class="reviews-header">
+            <h3 style="font-family: var(--font-serif); color: var(--accent-gold); font-size: 1.4rem;">Verified Customer Reviews</h3>
+          </div>
+          
+          <div class="reviews-list">
+            ${salon.reviews.map(r => `
+              <div class="review-card">
+                <div class="review-meta">
+                  <div>
+                    <span class="review-author">${r.author}</span>
+                    <span class="review-date" style="margin-left: 10px;">${r.date}</span>
+                  </div>
+                  <div class="review-stars">
+                    ${Array.from({ length: 5 }).map((_, i) => `
+                      <svg viewBox="0 0 24 24" style="fill: ${i < r.rating ? 'var(--accent-gold)' : 'transparent'}; stroke: var(--accent-gold); stroke-width: 1.5; width:12px; height:12px;">
+                        <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+                      </svg>
+                    `).join('')}
+                  </div>
+                </div>
+                <p class="review-text">"${r.text}"</p>
+              </div>
+            `).join('')}
+          </div>
+
+          <!-- Add Review Form -->
+          <div class="review-form glass-panel">
+            <h4 class="review-form-title">Leave a Verified Review</h4>
+            <div class="form-group">
+              <label class="form-label">Reviewer Name</label>
+              <input type="text" id="review-author-input" class="form-input" placeholder="Rohan Sharma" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Service Rating</label>
+              <div class="rating-select-group" id="rating-select-group">
+                ${[1, 2, 3, 4, 5].map(star => `
+                  <svg class="rating-select-star ${star <= state.activeFormRating ? 'active' : ''}" data-value="${star}" viewBox="0 0 24 24">
+                    <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+                  </svg>
+                `).join('')}
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Testimonial Comment</label>
+              <textarea id="review-comment-input" class="form-input" style="height:80px; resize:none;" placeholder="Detail your grooming experience..."></textarea>
+            </div>
+            <button class="btn-primary" id="review-submit-btn" data-salon-id="${salon.id}">Submit Review</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
 function renderWizardStep() {
+  const salon = state.selectedSalon
   const stylist = state.selectedStylist
-  if (state.currentStep !== 0 && !stylist) return ''
   
-  if (state.currentStep === 0) {
-    // Direct booking stylist selector (Step 0)
+  if (state.currentStep !== -1 && state.currentStep !== 0 && !stylist) return ''
+
+  if (state.currentStep === -1) {
+    // Booking Step -1: Select Salon
+    return `
+      <div class="modal-details-header">
+        <h3>Choose Salon Location</h3>
+        <p>Select a luxury salon area to start your experience reservation.</p>
+      </div>
+      <div class="salon-select-list">
+        ${state.salons.map(s => `
+          <div class="salon-select-item glass-panel" data-select-salon-id="${s.id}">
+            <div class="salon-select-info">
+              <h4 class="salon-select-name">${s.name}</h4>
+              <p class="salon-select-details">${s.location} Area <span>•</span> ${s.luxuryLevel}</p>
+            </div>
+            <div class="stylist-select-rating">
+              ${icons.star}
+              <span>${s.rating.toFixed(1)}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="wizard-footer">
+        <button class="btn-glass" id="wizard-step-1-cancel">Cancel</button>
+        <div></div>
+      </div>
+    `
+  } else if (state.currentStep === 0) {
+    // Booking Step 0: Select Stylist (filtered by salon selection)
+    const salonStylists = stylists.filter(s => salon.stylistIds.includes(s.id))
     return `
       <div class="modal-details-header">
         <h3>Choose Your Artisan</h3>
-        <p>Select a master stylist or therapist to start scheduling your experience.</p>
+        <p>Select a master stylist associated with ${salon.name}.</p>
       </div>
       <div class="stylist-select-list">
-        ${stylists.map(s => `
+        ${salonStylists.map(s => `
           <div class="stylist-select-item glass-panel" data-select-stylist-id="${s.id}">
             <div class="stylist-select-avatar">
               <img src="${s.image}" alt="${s.name}">
@@ -347,26 +999,27 @@ function renderWizardStep() {
         `).join('')}
       </div>
       <div class="wizard-footer">
-        <button class="btn-glass" id="wizard-step0-cancel">Cancel</button>
+        <button class="btn-glass" id="wizard-step0-back">Back</button>
         <div></div>
       </div>
     `
   } else if (state.currentStep === 1) {
-    // Step 1: Select Services
+    // Booking Step 1: Select Services (linked to salon catalog)
+    const availableServices = salon.services
     return `
       <div class="modal-details-header">
         <h3>Select Indulgences</h3>
-        <p>Curated services provided by ${stylist.name}. Choose one or more.</p>
+        <p>Curated services provided by ${stylist.name} at ${salon.name}.</p>
       </div>
       <div class="services-list">
-        ${stylist.services.map(service => {
+        ${availableServices.map(service => {
           const isChecked = state.selectedServices.some(s => s.id === service.id)
           return `
             <div class="service-item glass-panel ${isChecked ? 'selected' : ''}" data-service-id="${service.id}" style="${isChecked ? 'background: rgba(197, 168, 128, 0.08); border-color: var(--accent-gold);' : ''}">
               <input type="checkbox" class="service-checkbox" ${isChecked ? 'checked' : ''}>
               <div class="service-info">
                 <p class="service-name">${service.name}</p>
-                <p class="service-duration">${service.duration}</p>
+                <p class="service-duration">${service.category}</p>
               </div>
               <div class="service-price">Rs. ${service.price.toLocaleString()}</div>
             </div>
@@ -374,14 +1027,14 @@ function renderWizardStep() {
         }).join('')}
       </div>
       <div class="wizard-footer">
-        ${state.bookings.length > 0 || state.selectedStylist ? `<button class="btn-glass" id="wizard-step1-back">Back</button>` : '<div></div>'}
+        <button class="btn-glass" id="wizard-step1-back">Back</button>
         <button class="btn-primary" id="wizard-step1-next" ${state.selectedServices.length === 0 ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
           Select Date & Time
         </button>
       </div>
     `
   } else if (state.currentStep === 2) {
-    // Step 2: Date, Time & Details
+    // Booking Step 2: Date, Time & Details
     const totalPrice = state.selectedServices.reduce((sum, s) => sum + s.price, 0)
     return `
       <div class="modal-details-header">
@@ -450,7 +1103,7 @@ function renderWizardStep() {
       </div>
     `
   } else if (state.currentStep === 3) {
-    // Step 3: Success Ticket Receipt
+    // Booking Step 3: Success Ticket Receipt
     const booking = state.latestBooking
     if (!booking) return ''
 
@@ -479,8 +1132,12 @@ function renderWizardStep() {
             
             <div class="ticket-details">
               <div class="ticket-row">
+                <span class="ticket-label">Salon</span>
+                <span class="ticket-value" style="font-weight:600;">${booking.salonName} (${booking.salonArea})</span>
+              </div>
+              <div class="ticket-row">
                 <span class="ticket-label">Stylist</span>
-                <span class="ticket-value" style="font-weight: 600;">${booking.stylistName}</span>
+                <span class="ticket-value">${booking.stylistName}</span>
               </div>
               <div class="ticket-row">
                 <span class="ticket-label">Date</span>
@@ -517,26 +1174,72 @@ function renderWizardStep() {
 }
 
 // ----------------------------------------------------
+// Leaflet Map Initialization Engine
+// ----------------------------------------------------
+function initLeafletMap() {
+  // Clear map reference if already initialized
+  if (leafletMap) {
+    leafletMap.remove()
+    leafletMap = null
+  }
+
+  const mapContainer = document.querySelector('#map')
+  if (!mapContainer) return
+
+  // 1. Initialize Map centered on Bangalore
+  leafletMap = L.map('map', {
+    scrollWheelZoom: false
+  }).setView([12.964, 77.635], 11)
+
+  // 2. Add CartoDB Dark Matter tile layer for premium look
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+  }).addTo(leafletMap)
+
+  // 3. Define custom gold circle markers
+  const goldIcon = L.divIcon({
+    className: 'custom-gold-marker',
+    html: `<div style="background-color: var(--accent-gold); width: 14px; height: 14px; border: 2.5px solid #000; border-radius: 50%; box-shadow: 0 0 12px var(--accent-gold);"></div>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 7]
+  })
+
+  // 4. Drop pins for each active salon
+  state.salons.forEach(s => {
+    if (s.coordinates) {
+      const marker = L.marker(s.coordinates, { icon: goldIcon }).addTo(leafletMap)
+      
+      const popupHtml = `
+        <div style="padding: 5px;">
+          <h3>${s.name}</h3>
+          <p>${s.location} Area • ⭐ ${s.rating.toFixed(1)}</p>
+          <button class="btn-primary btn-map-explore" data-salon-id="${s.id}" style="width: 100%; border-radius: 20px; font-size: 0.7rem; padding: 5px 0; border: none; cursor: pointer; background: var(--accent-gold); color: #000; font-weight: bold;">Explore & Book</button>
+        </div>
+      `
+      
+      marker.bindPopup(popupHtml)
+    }
+  })
+}
+
+// ----------------------------------------------------
 // Glassy grow-out-of-card animation implementation
 // ----------------------------------------------------
-function openGlassyModal(clickedCardElement = null, isDirectSelection = false) {
+function openGlassyModal(clickedCardElement = null) {
   const overlay = document.querySelector('#modal-overlay')
   const container = document.querySelector('.modal-container')
   const contentBody = document.querySelector('#modal-content-body')
 
   if (!overlay || !container || !contentBody) return
 
-  // 1. Prepare overlay background fade in
   overlay.classList.add('open')
   contentBody.style.opacity = '0'
   container.style.overflowY = 'hidden'
 
-  // 2. Compute starting rect
   let startRect
   if (clickedCardElement) {
     startRect = clickedCardElement.getBoundingClientRect()
   } else {
-    // If no card (direct booking clicked from navbar), grow from the navbar button or screen center
     const navBtn = document.querySelector('#nav-book-shortcut')
     if (navBtn) {
       startRect = navBtn.getBoundingClientRect()
@@ -550,7 +1253,6 @@ function openGlassyModal(clickedCardElement = null, isDirectSelection = false) {
     }
   }
 
-  // 3. Set container dimensions instantly to match source card coordinates
   container.style.position = 'fixed'
   container.style.top = `${startRect.top}px`
   container.style.left = `${startRect.left}px`
@@ -559,17 +1261,16 @@ function openGlassyModal(clickedCardElement = null, isDirectSelection = false) {
   container.style.borderRadius = '16px'
   container.style.transition = 'none'
 
-  // Force reflow/repaint
-  container.offsetHeight
+  container.offsetHeight // force reflow
 
-  // 4. Calculate target landing dimensions
   const isDesktop = window.innerWidth > 992
   const targetWidth = Math.min(window.innerWidth * 0.9, 900)
-  const targetHeight = Math.min(window.innerHeight * 0.9, isDesktop ? 650 : (isDirectSelection ? 450 : 850))
+  // Expand height based on content type
+  const isSalonDetails = state.modalType === 'salon-details'
+  const targetHeight = Math.min(window.innerHeight * 0.9, isDesktop ? (isSalonDetails ? 750 : 650) : 850)
   const targetTop = (window.innerHeight - targetHeight) / 2
   const targetLeft = (window.innerWidth - targetWidth) / 2
 
-  // 5. Expand container smoothly
   container.style.transition = 'top 0.6s cubic-bezier(0.16, 1, 0.3, 1), left 0.6s cubic-bezier(0.16, 1, 0.3, 1), width 0.6s cubic-bezier(0.16, 1, 0.3, 1), height 0.6s cubic-bezier(0.16, 1, 0.3, 1), border-radius 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
   container.style.top = `${targetTop}px`
   container.style.left = `${targetLeft}px`
@@ -577,10 +1278,9 @@ function openGlassyModal(clickedCardElement = null, isDirectSelection = false) {
   container.style.height = `${targetHeight}px`
   container.style.borderRadius = '20px'
 
-  // 6. Fade in inner content once transition completes
   setTimeout(() => {
     contentBody.style.opacity = '1'
-    container.style.overflowY = 'hidden' // Scrolling handled inside content-body wrapper
+    container.style.overflowY = 'hidden'
   }, 450)
 }
 
@@ -595,13 +1295,15 @@ function closeGlassyModal() {
     return
   }
 
-  // 1. Fade out content body
   contentBody.style.opacity = '0'
 
   setTimeout(() => {
-    // 2. Compute shrinking destination coordinates
     let endRect
-    if (state.selectedStylist) {
+    // Shrink back to respective card if applicable
+    if (state.modalType === 'salon-details' && state.selectedSalonDetail) {
+      const card = document.querySelector(`.salon-card[data-salon-id="${state.selectedSalonDetail.id}"]`)
+      if (card) endRect = card.getBoundingClientRect()
+    } else if (state.selectedStylist) {
       const card = document.querySelector(`.stylist-card[data-id="${state.selectedStylist.id}"]`)
       if (card) endRect = card.getBoundingClientRect()
     }
@@ -620,52 +1322,82 @@ function closeGlassyModal() {
       }
     }
 
-    // 3. Shrink container back to start rect coordinates
     container.style.top = `${endRect.top}px`
     container.style.left = `${endRect.left}px`
     container.style.width = `${endRect.width}px`
     container.style.height = `${endRect.height}px`
     container.style.borderRadius = '16px'
 
-    // 4. Remove overlay background colors/blur
     overlay.classList.remove('open')
 
-    // 5. Clean state and refresh DOM
     setTimeout(() => {
       state.isModalOpen = false
+      state.selectedSalonDetail = null
+      state.selectedStylistDetail = null
+      state.selectedSalon = null
       state.selectedStylist = null
       state.selectedServices = []
       state.selectedDate = null
       state.selectedTime = null
       state.latestBooking = null
-      state.currentStep = 1
+      state.currentStep = -1
       renderApp()
     }, 600)
   }, 200)
 }
 
 // ----------------------------------------------------
+// Chatbot Bot Processing Engine
+// ----------------------------------------------------
+function processChatbotQuery(query) {
+  const norm = query.toLowerCase()
+  let reply = ''
+
+  // Add User message
+  state.chatbotMessages.push({ sender: 'user', text: query })
+  renderApp()
+  scrollChatToBottom()
+
+  // Match AI Response
+  setTimeout(() => {
+    if (norm.includes('face') || norm.includes('shape') || norm.includes('round') || norm.includes('oval') || norm.includes('square')) {
+      reply = `Hairstyles should highlight your bone structure. For <strong>round face shapes</strong>, we recommend long textured layers, long shags, or a high-volume undercut by <strong>Aarav Mehta</strong>. For <strong>oval shapes</strong>, almost anything works—try Priya's <strong>Bespoke Balayage</strong>! If you have a <strong>square face</strong>, soft waves or wispy side fringes help soften angles.`
+    } else if (norm.includes('home') || norm.includes('at home') || norm.includes('visit') || norm.includes('doorstep')) {
+      reply = `We provide verified at-home styling services! Flagship salons offering <strong>Home Services</strong> are <strong>Aura Salon & Spa</strong> (Koramangala), <strong>The Royale Grooming</strong> (Whitefield), and <strong>Elixir Wellness</strong> (Sadashivanagar). You can <span class="chat-link" id="chat-link-home">start booking a home service here</span>.`
+    } else if (norm.includes('bridal') || norm.includes('wedding') || norm.includes('makeup')) {
+      reply = `For bridal couture and elaborate styling, <strong>Priya Sharma</strong> is our master colorist and styling specialist. She operating out of <strong>Aura Salon</strong> (Koramangala) and <strong>Vogue Artistry</strong> (Indiranagar). Her bridal services include Red Carpet designs starting at ₹2,500. <span class="chat-link" id="chat-link-priya">View Priya's profile and book here</span>.`
+    } else if (norm.includes('budget') || norm.includes('under') || norm.includes('₹') || norm.includes('cheap') || norm.includes('price')) {
+      const numbers = norm.match(/\d+/g)
+      const maxVal = numbers ? Math.max(...numbers.map(Number)) : 2000
+      
+      if (maxVal < 1500) {
+        reply = `For grooming under ₹1,500, we recommend booking a <strong>Classic Hot Towel Shave</strong> (₹700) or <strong>Beard Trim</strong> (₹600) with master barber <strong>Kabir Malhotra</strong> at <strong>The Royale Grooming</strong> (Whitefield).`
+      } else if (maxVal <= 3000) {
+        reply = `With a budget of ₹${maxVal.toLocaleString()}, you can book <strong>Bespoke Handpainted Gel Art</strong> (₹2,200) with <strong>Ananya Sen</strong> at <strong>Nail Couture</strong> (Jayanagar), or an <strong>Organic Essential Oil Hair Spa</strong> (₹2,800) with <strong>Meera Iyer</strong> at <strong>Elixir Wellness</strong> (Sadashivanagar).`
+      } else {
+        reply = `For budgets above ₹3,000, indulge in ultra-luxury facials like the <strong>Gold Dust Dermal Glow</strong> (₹4,000) by skin specialist <strong>Vikram Singh</strong> at <strong>Vogue Artistry</strong> (Indiranagar).`
+      }
+    } else if (norm.includes('koramangala')) {
+      reply = `In Koramangala, we host <strong>Aura Salon & Spa</strong>. It has a stellar 4.9 rating and features specialties in Hair Sculpting & Couture Coloring. Amenities include champagne service and VIP lounges. <span class="chat-link" id="chat-link-aura">Book Aura Salon now</span>.`
+    } else {
+      reply = `I recommend starting with a complimentary skin & hair consultation with our specialist, <strong>Vikram Singh</strong>. He performs dermis analysis and scalp therapies at <strong>Vogue Artistry</strong> (Indiranagar) and <strong>The Royale Grooming</strong> (Whitefield). <span class="chat-link" id="chat-link-vikram">Book Vikram here</span>.`
+    }
+
+    state.chatbotMessages.push({ sender: 'bot', text: reply })
+    state.chatbotUnread = false
+    renderApp()
+    scrollChatToBottom()
+  }, 800)
+}
+
+function scrollChatToBottom() {
+  const log = document.querySelector('#chatbot-chat-log')
+  if (log) log.scrollTop = log.scrollHeight
+}
+
+// ----------------------------------------------------
 // Calendar Engine Logic
 // ----------------------------------------------------
-function getTodayString() {
-  const d = new Date()
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const date = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${date}`
-}
-
-function isTimeHourPast(timeStr) {
-  const now = new Date()
-  const [time, modifier] = timeStr.split(' ')
-  let [hours, minutes] = time.split(':').map(Number)
-  if (modifier === 'PM' && hours < 12) hours += 12
-  if (modifier === 'AM' && hours === 12) hours = 0
-  const slotDate = new Date()
-  slotDate.setHours(hours, minutes, 0, 0)
-  return slotDate.getTime() < now.getTime()
-}
-
 function renderCalendarDays() {
   const container = document.querySelector('#calendar-days-container')
   const titleText = document.querySelector('#calendar-title-text')
@@ -736,11 +1468,30 @@ function renderCalendarDays() {
   }
 }
 
+function getTodayString() {
+  const d = new Date()
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const date = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${date}`
+}
+
+function isTimeHourPast(timeStr) {
+  const now = new Date()
+  const [time, modifier] = timeStr.split(' ')
+  let [hours, minutes] = time.split(':').map(Number)
+  if (modifier === 'PM' && hours < 12) hours += 12
+  if (modifier === 'AM' && hours === 12) hours = 0
+  const slotDate = new Date()
+  slotDate.setHours(hours, minutes, 0, 0)
+  return slotDate.getTime() < now.getTime()
+}
+
 // ----------------------------------------------------
-// Event Listeners Configuration
+// Global Event Listeners Configuration
 // ----------------------------------------------------
 function attachGlobalEventListeners() {
-  // Mobile Hamburger Navigation
+  // Mobile Hamburger menu toggle
   const menuBtn = document.querySelector('#menu-btn')
   const navLinks = document.querySelector('#nav-links')
   if (menuBtn && navLinks) {
@@ -749,17 +1500,15 @@ function attachGlobalEventListeners() {
     })
   }
 
-  // Logo navigation click (Back to Landing Cover page)
+  // Navigation Links click routing
   const logoBtn = document.querySelector('#logo-btn')
   if (logoBtn) {
     logoBtn.addEventListener('click', () => {
       state.activeView = 'landing'
       renderApp()
-      window.scrollTo({ top: 0, behavior: 'smooth' })
     })
   }
 
-  // Home link
   const navHome = document.querySelector('#nav-home')
   if (navHome) {
     navHome.addEventListener('click', () => {
@@ -769,7 +1518,15 @@ function attachGlobalEventListeners() {
     })
   }
 
-  // Stylists list link
+  const navSalons = document.querySelector('#nav-salons')
+  if (navSalons) {
+    navSalons.addEventListener('click', () => {
+      state.activeView = 'salons'
+      renderApp()
+      if (navLinks.classList.contains('open')) navLinks.classList.remove('open')
+    })
+  }
+
   const navStylists = document.querySelector('#nav-stylists')
   if (navStylists) {
     navStylists.addEventListener('click', () => {
@@ -779,7 +1536,6 @@ function attachGlobalEventListeners() {
     })
   }
 
-  // Models showcase gallery link
   const navModels = document.querySelector('#nav-models')
   if (navModels) {
     navModels.addEventListener('click', () => {
@@ -789,25 +1545,6 @@ function attachGlobalEventListeners() {
     })
   }
 
-  // Direct Book Experience link (Opens modal directly starting with Stylist Selection Step 0)
-  const navBookShortcut = document.querySelector('#nav-book-shortcut')
-  if (navBookShortcut) {
-    navBookShortcut.addEventListener('click', () => {
-      state.selectedStylist = null
-      state.selectedServices = []
-      state.selectedDate = null
-      state.selectedTime = null
-      state.currentStep = 0 // Stylist selection first
-      state.isModalOpen = true
-      
-      if (navLinks.classList.contains('open')) navLinks.classList.remove('open')
-      
-      renderApp()
-      openGlassyModal(null, true)
-    })
-  }
-
-  // Bookings link
   const navBookings = document.querySelector('#nav-bookings')
   if (navBookings) {
     navBookings.addEventListener('click', () => {
@@ -817,11 +1554,31 @@ function attachGlobalEventListeners() {
     })
   }
 
-  // Landing page CTA button events
+  // Direct Booking Wizard shortcut from navbar
+  const navBookShortcut = document.querySelector('#nav-book-shortcut')
+  if (navBookShortcut) {
+    navBookShortcut.addEventListener('click', () => {
+      state.selectedSalonDetail = null
+      state.selectedSalon = null
+      state.selectedStylist = null
+      state.selectedServices = []
+      state.selectedDate = null
+      state.selectedTime = null
+      state.currentStep = -1 // Start at select salon
+      state.modalType = 'booking'
+      state.isModalOpen = true
+      
+      if (navLinks.classList.contains('open')) navLinks.classList.remove('open')
+      renderApp()
+      openGlassyModal(null)
+    })
+  }
+
+  // Landing page CTA buttons
   const landingExploreBtn = document.querySelector('#landing-explore-btn')
   if (landingExploreBtn) {
     landingExploreBtn.addEventListener('click', () => {
-      state.activeView = 'stylists'
+      state.activeView = 'salons'
       renderApp()
     })
   }
@@ -829,47 +1586,181 @@ function attachGlobalEventListeners() {
   const landingBookBtn = document.querySelector('#landing-book-btn')
   if (landingBookBtn) {
     landingBookBtn.addEventListener('click', () => {
+      state.selectedSalon = null
       state.selectedStylist = null
       state.selectedServices = []
       state.selectedDate = null
       state.selectedTime = null
-      state.currentStep = 0 // Stylist selection first
+      state.currentStep = -1 // Choose salon first
+      state.modalType = 'booking'
       state.isModalOpen = true
       renderApp()
-      openGlassyModal(null, true)
+      openGlassyModal(null)
     })
   }
 
-  // Bookings dashboard CTA button event
+  // Bookings empty page CTA
   const bookingsBookBtn = document.querySelector('#bookings-book-btn')
   if (bookingsBookBtn) {
     bookingsBookBtn.addEventListener('click', () => {
-      state.activeView = 'stylists'
+      state.activeView = 'salons'
       renderApp()
     })
   }
 
-  // Stylist Cards Click - Open Modal with Grow Transition
-  const cards = document.querySelectorAll('.stylist-card')
-  cards.forEach(card => {
-    card.addEventListener('click', () => {
-      const id = card.getAttribute('data-id')
-      const stylist = stylists.find(s => s.id === id)
-      if (stylist) {
-        state.selectedStylist = stylist
+  // Floating Compare bar action
+  const compareBarBtn = document.querySelector('#compare-bar-btn')
+  if (compareBarBtn) {
+    compareBarBtn.addEventListener('click', () => {
+      state.activeView = 'compare'
+      renderApp()
+    })
+  }
+
+  const compareBackBtn = document.querySelector('#compare-back-btn')
+  if (compareBackBtn) {
+    compareBackBtn.addEventListener('click', () => {
+      state.activeView = 'salons'
+      renderApp()
+    })
+  }
+
+  const compareBookBtns = document.querySelectorAll('.btn-compare-book')
+  compareBookBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const salonId = btn.getAttribute('data-salon-id')
+      const salon = state.salons.find(s => s.id === salonId)
+      if (salon) {
+        state.selectedSalon = salon
+        state.selectedStylist = null
         state.selectedServices = []
-        state.selectedDate = null
-        state.selectedTime = null
-        state.currentStep = 1 // Start at service selection directly
+        state.currentStep = 0 // Skip select salon, choose stylist next
+        state.modalType = 'booking'
         state.isModalOpen = true
-        
         renderApp()
-        openGlassyModal(card, false)
+        openGlassyModal(btn)
       }
     })
   })
 
-  // Model Card Buttons Click - Open Modal with corresponding stylist & service pre-selected
+  // Marketplace filter inputs listeners
+  const searchInput = document.querySelector('#search-input')
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      state.filterSearch = searchInput.value
+      // Debounce or instant render (since dataset is tiny, instant is highly responsive!)
+      renderApp()
+      // Put cursor back to end of search input
+      const inputEl = document.querySelector('#search-input')
+      if (inputEl) {
+        inputEl.focus()
+        inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length)
+      }
+    })
+  }
+
+  const selectLoc = document.querySelector('#filter-location')
+  if (selectLoc) {
+    selectLoc.addEventListener('change', () => {
+      state.filterLocation = selectLoc.value
+      renderApp()
+    })
+  }
+
+  const selectPrice = document.querySelector('#filter-price')
+  if (selectPrice) {
+    selectPrice.addEventListener('change', () => {
+      state.filterPrice = selectPrice.value
+      renderApp()
+    })
+  }
+
+  const selectService = document.querySelector('#filter-service')
+  if (selectService) {
+    selectService.addEventListener('change', () => {
+      state.filterService = selectService.value
+      renderApp()
+    })
+  }
+
+  const selectHome = document.querySelector('#filter-home')
+  if (selectHome) {
+    selectHome.addEventListener('change', () => {
+      state.filterHome = selectHome.value
+      renderApp()
+    })
+  }
+
+  // AI Recommendation matchmaking submission
+  const matchSubmitBtn = document.querySelector('#ai-match-submit-btn')
+  if (matchSubmitBtn) {
+    matchSubmitBtn.addEventListener('click', () => {
+      const text = document.querySelector('#ai-match-textarea').value
+      processAiMatching(text)
+    })
+  }
+
+  // Favorite ❤️ Toggle
+  const favBtns = document.querySelectorAll('.btn-favorite')
+  favBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const salonId = btn.getAttribute('data-salon-id')
+      toggleFavorite(salonId)
+    })
+  })
+
+  // Compare checkboxes
+  const compareCheckboxes = document.querySelectorAll('.compare-checkbox')
+  compareCheckboxes.forEach(cb => {
+    cb.addEventListener('change', () => {
+      const salonId = cb.getAttribute('data-salon-compare-id')
+      toggleCompare(salonId)
+    })
+  })
+
+  // Explore Salon details click
+  const exploreSalonBtns = document.querySelectorAll('.btn-salon-explore')
+  exploreSalonBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const salonId = btn.getAttribute('data-salon-id')
+      const salon = state.salons.find(s => s.id === salonId)
+      if (salon) {
+        state.selectedSalonDetail = salon
+        state.modalType = 'salon-details'
+        state.isModalOpen = true
+        state.activeFormRating = 5 // reset form rating
+        renderApp()
+        openGlassyModal(btn)
+      }
+    })
+  })
+
+  // Stylist Card Click -> Open Stylist detail/booking direct
+  const stylistCards = document.querySelectorAll('.stylist-card')
+  stylistCards.forEach(card => {
+    card.addEventListener('click', () => {
+      const stylistId = card.getAttribute('data-id')
+      const stylist = stylists.find(s => s.id === stylistId)
+      if (stylist) {
+        // Find salon associated with stylist
+        const salon = state.salons.find(s => s.stylistIds.includes(stylist.id))
+        state.selectedSalon = salon
+        state.selectedStylist = stylist
+        state.selectedServices = []
+        state.selectedDate = null
+        state.selectedTime = null
+        state.currentStep = 1 // Start directly at service list
+        state.modalType = 'booking'
+        state.isModalOpen = true
+        renderApp()
+        openGlassyModal(card)
+      }
+    })
+  })
+
+  // Model Card book look action click
   const modelCards = document.querySelectorAll('.model-card')
   modelCards.forEach(card => {
     const bookBtn = card.querySelector('.btn-model-book')
@@ -880,36 +1771,40 @@ function attachGlobalEventListeners() {
         const model = models.find(m => m.id === modelId)
         if (model) {
           const stylist = stylists.find(s => s.id === model.stylistId)
-          if (stylist) {
+          const salon = state.salons.find(s => s.stylistIds.includes(model.stylistId))
+          
+          if (stylist && salon) {
+            state.selectedSalon = salon
             state.selectedStylist = stylist
             state.selectedServices = []
-            
-            // Auto-select corresponding serviceId
+
+            // Auto-check corresponding serviceId
             let serviceId = ''
             if (model.id === 'model-1') serviceId = 'by-bespoke'
             else if (model.id === 'model-2') serviceId = 'hc-royal'
             else if (model.id === 'model-3') serviceId = 'st-bridal'
             else if (model.id === 'model-4') serviceId = 'hc-royal'
 
-            const service = stylist.services.find(s => s.id === serviceId)
+            const service = salon.services.find(s => s.id === serviceId)
             if (service) {
               state.selectedServices.push(service)
             }
 
             state.selectedDate = null
             state.selectedTime = null
-            state.currentStep = 1 // Go directly to services (with item auto-selected)
+            state.currentStep = 1
+            state.modalType = 'booking'
             state.isModalOpen = true
 
             renderApp()
-            openGlassyModal(card, false)
+            openGlassyModal(card)
           }
         }
       })
     }
   })
 
-  // Modal Overlay Close button
+  // Modal Close trigger
   const modalCloseBtn = document.querySelector('#modal-close-btn')
   if (modalCloseBtn) {
     modalCloseBtn.addEventListener('click', () => {
@@ -917,9 +1812,203 @@ function attachGlobalEventListeners() {
     })
   }
 
-  // Wizard Step-specific event binding
-  if (state.isModalOpen) {
-    if (state.currentStep === 0) {
+  // Floating Chatbot UI triggers
+  const chatbotFab = document.querySelector('#chatbot-fab')
+  if (chatbotFab) {
+    chatbotFab.addEventListener('click', () => {
+      state.chatbotOpen = !state.chatbotOpen
+      state.chatbotUnread = false
+      renderApp()
+      scrollChatToBottom()
+    })
+  }
+
+  const chatbotClose = document.querySelector('#chatbot-close')
+  if (chatbotClose) {
+    chatbotClose.addEventListener('click', () => {
+      state.chatbotOpen = false
+      renderApp()
+    })
+  }
+
+  const chatbotSendBtn = document.querySelector('#chatbot-send-btn')
+  const chatbotInput = document.querySelector('#chatbot-input')
+  
+  if (chatbotSendBtn && chatbotInput) {
+    chatbotSendBtn.addEventListener('click', () => {
+      const q = chatbotInput.value.trim()
+      if (q) {
+        chatbotInput.value = ''
+        processChatbotQuery(q)
+      }
+    })
+    
+    chatbotInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        const q = chatbotInput.value.trim()
+        if (q) {
+          chatbotInput.value = ''
+          processChatbotQuery(q)
+        }
+      }
+    })
+  }
+
+  // Chatbot question shortcuts clicking
+  const shortcutBtns = document.querySelectorAll('.chat-shortcut-btn')
+  shortcutBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = btn.getAttribute('data-query')
+      processChatbotQuery(q)
+    })
+  })
+
+  // Chatbot inline shortcuts navigation inside messages
+  const chatLinkHome = document.querySelector('#chat-link-home')
+  if (chatLinkHome) {
+    chatLinkHome.addEventListener('click', () => {
+      state.chatbotOpen = false
+      state.activeView = 'salons'
+      state.filterHome = 'true'
+      renderApp()
+    })
+  }
+
+  const chatLinkPriya = document.querySelector('#chat-link-priya')
+  if (chatLinkPriya) {
+    chatLinkPriya.addEventListener('click', () => {
+      state.chatbotOpen = false
+      state.activeView = 'stylists'
+      renderApp()
+    })
+  }
+
+  const chatLinkAura = document.querySelector('#chat-link-aura')
+  if (chatLinkAura) {
+    chatLinkAura.addEventListener('click', () => {
+      state.chatbotOpen = false
+      const salon = state.salons.find(s => s.id === 'aura-koramangala')
+      if (salon) {
+        state.selectedSalon = salon
+        state.selectedStylist = null
+        state.selectedServices = []
+        state.currentStep = 0
+        state.modalType = 'booking'
+        state.isModalOpen = true
+        renderApp()
+        openGlassyModal(null)
+      }
+    })
+  }
+
+  const chatLinkVikram = document.querySelector('#chat-link-vikram')
+  if (chatLinkVikram) {
+    chatLinkVikram.addEventListener('click', () => {
+      state.chatbotOpen = false
+      const stylist = stylists.find(s => s.id === 'vikram-singh')
+      const salon = state.salons.find(s => s.stylistIds.includes('vikram-singh'))
+      if (stylist && salon) {
+        state.selectedSalon = salon
+        state.selectedStylist = stylist
+        state.selectedServices = []
+        state.currentStep = 1
+        state.modalType = 'booking'
+        state.isModalOpen = true
+        renderApp()
+        openGlassyModal(null)
+      }
+    })
+  }
+
+  // Reviews Submission logic inside Salon details modal
+  const starBtns = document.querySelectorAll('.rating-select-star')
+  starBtns.forEach(star => {
+    star.addEventListener('click', () => {
+      const val = parseInt(star.getAttribute('data-value'))
+      state.activeFormRating = val
+      
+      // Update star classes instantly
+      starBtns.forEach(s => {
+        const starVal = parseInt(s.getAttribute('data-value'))
+        if (starVal <= val) {
+          s.classList.add('active')
+        } else {
+          s.classList.remove('active')
+        }
+      })
+    })
+  })
+
+  const reviewSubmitBtn = document.querySelector('#review-submit-btn')
+  if (reviewSubmitBtn) {
+    reviewSubmitBtn.addEventListener('click', () => {
+      const salonId = reviewSubmitBtn.getAttribute('data-salon-id')
+      const authorVal = document.querySelector('#review-author-input').value.trim()
+      const commentVal = document.querySelector('#review-comment-input').value.trim()
+
+      if (!authorVal || !commentVal) {
+        alert('Please complete both name and testimonial fields to submit your verified review.')
+        return
+      }
+
+      const salon = state.salons.find(s => s.id === salonId)
+      if (salon) {
+        // Add new review
+        const newReview = {
+          author: authorVal,
+          text: commentVal,
+          rating: state.activeFormRating,
+          date: new Date().toISOString().split('T')[0]
+        }
+        
+        salon.reviews.unshift(newReview)
+        
+        // Recalculate average rating of salon
+        const sumRating = salon.reviews.reduce((sum, r) => sum + r.rating, 0)
+        salon.rating = sumRating / salon.reviews.length
+        
+        saveState('bl_salons', state.salons)
+        
+        alert('Thank you! Your verified customer review has been added.')
+        
+        // Rerender Modal
+        const detailsBody = document.querySelector('#modal-content-body')
+        if (detailsBody) {
+          detailsBody.innerHTML = renderSalonDetailsModal()
+          attachGlobalEventListeners()
+        }
+      }
+    })
+  }
+
+  // Booking details CTA inside Salon Details Modal
+  const detailsBookBtn = document.querySelector('#salon-details-book-btn')
+  if (detailsBookBtn) {
+    detailsBookBtn.addEventListener('click', () => {
+      const salonId = detailsBookBtn.getAttribute('data-salon-id')
+      const salon = state.salons.find(s => s.id === salonId)
+      if (salon) {
+        // Switch modal view from details to booking wizard
+        state.selectedSalon = salon
+        state.selectedStylist = null
+        state.selectedServices = []
+        state.currentStep = 0 // Advance directly to choose stylist
+        state.modalType = 'booking'
+        
+        const detailsBody = document.querySelector('#modal-content-body')
+        if (detailsBody) {
+          detailsBody.innerHTML = renderModalContent()
+          attachGlobalEventListeners()
+        }
+      }
+    })
+  }
+
+  // Step-wizard booking navigation events
+  if (state.isModalOpen && state.modalType === 'booking') {
+    if (state.currentStep === -1) {
+      attachStepMinus1EventListeners()
+    } else if (state.currentStep === 0) {
       attachStep0EventListeners()
     } else if (state.currentStep === 1) {
       attachStep1EventListeners()
@@ -930,18 +2019,48 @@ function attachGlobalEventListeners() {
     }
   }
 
-  // Booking Cancellation
+  // Booking Cancel Action
   const cancelBtns = document.querySelectorAll('.btn-cancel')
   cancelBtns.forEach(btn => {
     btn.addEventListener('click', (e) => {
       const index = parseInt(btn.getAttribute('data-index'))
       if (confirm('Are you sure you want to cancel this reservation?')) {
         state.bookings.splice(index, 1)
-        saveBookings()
+        saveState('bl_bookings', state.bookings)
         renderApp()
       }
     })
   })
+}
+
+// ----------------------------------------------------
+// Wizard Step Navigators
+// ----------------------------------------------------
+function attachStepMinus1EventListeners() {
+  const items = document.querySelectorAll('.salon-select-item')
+  items.forEach(item => {
+    item.addEventListener('click', () => {
+      const salonId = item.getAttribute('data-select-salon-id')
+      const salon = state.salons.find(s => s.id === salonId)
+      if (salon) {
+        state.selectedSalon = salon
+        state.currentStep = 0 // Proceed to Stylists selector
+        
+        const modalBody = document.querySelector('#modal-content-body')
+        if (modalBody) {
+          modalBody.innerHTML = renderModalContent()
+          attachStep0EventListeners()
+        }
+      }
+    })
+  })
+
+  const cancelBtn = document.querySelector('#wizard-step-1-cancel')
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      closeGlassyModal()
+    })
+  }
 }
 
 function attachStep0EventListeners() {
@@ -952,7 +2071,7 @@ function attachStep0EventListeners() {
       const stylist = stylists.find(s => s.id === stylistId)
       if (stylist) {
         state.selectedStylist = stylist
-        state.currentStep = 1 // Proceed to Services selector
+        state.currentStep = 1 // Proceed to Services checklist
         
         const modalBody = document.querySelector('#modal-content-body')
         if (modalBody) {
@@ -963,10 +2082,16 @@ function attachStep0EventListeners() {
     })
   })
 
-  const cancelBtn = document.querySelector('#wizard-step0-cancel')
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', () => {
-      closeGlassyModal()
+  const backBtn = document.querySelector('#wizard-step0-back')
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      state.selectedSalon = null
+      state.currentStep = -1 // Go back to salon selection
+      const modalBody = document.querySelector('#modal-content-body')
+      if (modalBody) {
+        modalBody.innerHTML = renderModalContent()
+        attachStepMinus1EventListeners()
+      }
     })
   }
 }
@@ -976,8 +2101,8 @@ function attachStep1EventListeners() {
   items.forEach(item => {
     item.addEventListener('click', () => {
       const serviceId = item.getAttribute('data-service-id')
-      const stylist = state.selectedStylist
-      const service = stylist.services.find(s => s.id === serviceId)
+      const salon = state.selectedSalon
+      const service = salon.services.find(s => s.id === serviceId)
       
       const foundIdx = state.selectedServices.findIndex(s => s.id === serviceId)
       if (foundIdx > -1) {
@@ -1012,7 +2137,7 @@ function attachStep1EventListeners() {
   if (nextBtn) {
     nextBtn.addEventListener('click', () => {
       state.currentStep = 2
-      state.calendarDate = new Date() // Reset to current month
+      state.calendarDate = new Date()
       const modalBody = document.querySelector('#modal-content-body')
       if (modalBody) {
         modalBody.innerHTML = renderModalContent()
@@ -1083,6 +2208,9 @@ function attachStep2EventListeners() {
       const email = document.querySelector('#guest-email').value.trim()
 
       const newBooking = {
+        salonId: state.selectedSalon.id,
+        salonName: state.selectedSalon.name,
+        salonArea: state.selectedSalon.location,
         stylistId: state.selectedStylist.id,
         stylistName: state.selectedStylist.name,
         services: [...state.selectedServices],
@@ -1095,7 +2223,7 @@ function attachStep2EventListeners() {
       }
 
       state.bookings.push(newBooking)
-      saveBookings()
+      saveState('bl_bookings', state.bookings)
       state.latestBooking = newBooking
       state.currentStep = 3
 
@@ -1138,6 +2266,26 @@ function attachStep3EventListeners() {
     })
   }
 }
+
+// Helper to center active Leaflet marker popups exploring via external links
+window.exploreSalonFromMap = function(salonId) {
+  const salon = state.salons.find(s => s.id === salonId)
+  if (salon) {
+    state.selectedSalonDetail = salon
+    state.modalType = 'salon-details'
+    state.isModalOpen = true
+    renderApp()
+    openGlassyModal(null)
+  }
+}
+
+// Delegate button explore clicks inside Leaflet popup elements
+document.addEventListener('click', (e) => {
+  if (e.target && e.target.classList.contains('btn-map-explore')) {
+    const salonId = e.target.getAttribute('data-salon-id')
+    window.exploreSalonFromMap(salonId)
+  }
+})
 
 // ----------------------------------------------------
 // Initial Bootstrapping
