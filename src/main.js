@@ -30,10 +30,12 @@ const state = {
   aiMatchOutput: null,
   chatbotOpen: false,
   chatbotUnread: true,
+  isTyping: false,
   chatbotMessages: [
-    { sender: 'bot', text: 'Welcome to Bangalore Luxury. I am Aura, your AI beauty concierge. How can I guide your styling journey today? Ask me about face shape cuts, bridal packages, or budget services!' }
+    { sender: 'bot', text: 'Welcome to Bangalore Luxury. I am Aura, your AI beauty concierge. How can I guide your styling journey today? Ask me about face shapes, luxury salons, bridal makeups, or budget recommendations!' }
   ],
-  activeFormRating: 5
+  activeFormRating: 5,
+  nearMeSearch: ''
 }
 
 // Map reference for Leaflet
@@ -116,6 +118,7 @@ function renderApp() {
       <ul class="nav-links" id="nav-links">
         <li class="nav-link ${state.activeView === 'landing' ? 'active' : ''}" id="nav-home">Home</li>
         <li class="nav-link ${state.activeView === 'salons' ? 'active' : ''}" id="nav-salons">Salons</li>
+        <li class="nav-link ${state.activeView === 'near-me' ? 'active' : ''}" id="nav-near-me">Near You</li>
         <li class="nav-link ${state.activeView === 'stylists' ? 'active' : ''}" id="nav-stylists">Stylists</li>
         <li class="nav-link ${state.activeView === 'models' ? 'active' : ''}" id="nav-models">Models</li>
         <li class="nav-link" id="nav-book-shortcut">Book Experience</li>
@@ -152,11 +155,22 @@ function renderApp() {
             ${msg.text}
           </div>
         `).join('')}
+        ${state.isTyping ? `
+          <div class="chat-bubble typing-bubble">
+            <div class="typing-indicator">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+          </div>
+        ` : ''}
       </div>
       <div class="chat-shortcuts">
-        <button class="chat-shortcut-btn" data-query="Which hairstyle suits a round face shape?">Round Face styles</button>
-        <button class="chat-shortcut-btn" data-query="Suggest salons with home service under ₹3000.">Home Service under ₹3k</button>
-        <button class="chat-shortcut-btn" data-query="Bridal styling recommendations.">Bridal makeup</button>
+        <button class="chat-shortcut-btn" data-query="Bridal Makeup">Bridal Makeup</button>
+        <button class="chat-shortcut-btn" data-query="Hair Spa">Hair Spa</button>
+        <button class="chat-shortcut-btn" data-query="Luxury Salons">Luxury Salons</button>
+        <button class="chat-shortcut-btn" data-query="Budget Friendly">Budget Friendly</button>
+        <button class="chat-shortcut-btn" data-query="Home Service">Home Service</button>
       </div>
       <div class="chatbot-input-bar">
         <input type="text" class="chatbot-input" id="chatbot-input" placeholder="Ask Aura about styling, salons..." autocomplete="off">
@@ -179,9 +193,11 @@ function renderApp() {
 
   attachGlobalEventListeners()
 
-  // Initialize Leaflet Map if active view is salons
+  // Initialize Leaflet Map if active view is salons or near-me
   if (state.activeView === 'salons') {
     initLeafletMap()
+  } else if (state.activeView === 'near-me') {
+    initNearMeMap()
   }
 }
 
@@ -191,6 +207,8 @@ function renderActiveView() {
       return renderLandingView()
     case 'salons':
       return renderSalonsView()
+    case 'near-me':
+      return renderNearMeView()
     case 'stylists':
       return renderStylistsView()
     case 'models':
@@ -384,11 +402,10 @@ function renderSalonCard(salon) {
             <button class="btn-glass btn-salon-explore" data-salon-id="${salon.id}" style="padding: 8px 16px; font-size: 0.75rem;">Explore</button>
           </div>
           
-          <!-- Compare checkbox -->
-          <label class="compare-card-checkbox">
-            <input type="checkbox" class="compare-checkbox" data-salon-compare-id="${salon.id}" ${isCompareChecked ? 'checked' : ''}>
-            Compare Salon
-          </label>
+          <!-- Compare button -->
+          <button class="btn-compare-card ${isCompareChecked ? 'active' : ''}" data-salon-compare-id="${salon.id}">
+            ${isCompareChecked ? '✓ Comparing' : '+ Compare'}
+          </button>
         </div>
       </div>
     </div>
@@ -531,8 +548,11 @@ function renderCompareView() {
         <h2 class="section-title">Compare Salon Offerings</h2>
       </div>
 
-      <div style="margin-bottom: 25px;">
+      <div style="margin-bottom: 25px; display: flex; gap: 15px;">
         <button class="btn-glass" id="compare-back-btn">&larr; Back to Marketplace</button>
+        ${salonsToCompare.length > 0 ? `
+          <button class="btn-glass" id="compare-clear-btn" style="border-color: rgba(239, 68, 68, 0.35); color: #f87171;">Clear Comparison</button>
+        ` : ''}
       </div>
 
       ${salonsToCompare.length === 0 ? `
@@ -545,16 +565,23 @@ function renderCompareView() {
             <thead>
               <tr>
                 <th class="feature-name">Features</th>
-                ${salonsToCompare.map(s => `<th>${s.name}</th>`).join('')}
+                ${salonsToCompare.map(s => `
+                  <th>
+                    <div class="compare-header-cell">
+                      <button class="remove-compare-btn" data-salon-id="${s.id}">&times;</button>
+                      <span class="compare-salon-name">${s.name}</span>
+                    </div>
+                  </th>
+                `).join('')}
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td class="feature-name">Location Area</td>
+                <td class="feature-name">Location</td>
                 ${salonsToCompare.map(s => `<td>${s.location}</td>`).join('')}
               </tr>
               <tr>
-                <td class="feature-name">Verified Rating</td>
+                <td class="feature-name">Rating</td>
                 ${salonsToCompare.map(s => `
                   <td>
                     <div style="display:flex; align-items:center; gap:5px; color: var(--accent-gold);">
@@ -565,23 +592,39 @@ function renderCompareView() {
                 `).join('')}
               </tr>
               <tr>
-                <td class="feature-name">Price Tier</td>
+                <td class="feature-name">Price Range</td>
                 ${salonsToCompare.map(s => `<td><strong style="color: var(--accent-gold);">${s.priceTier}</strong> (${s.priceRange})</td>`).join('')}
               </tr>
               <tr>
-                <td class="feature-name">Luxury Grade</td>
-                ${salonsToCompare.map(s => `<td>${s.luxuryLevel}</td>`).join('')}
+                <td class="feature-name">Premium Category</td>
+                ${salonsToCompare.map(s => `<td><span class="skill-tag" style="font-size:0.75rem; background: rgba(197, 168, 128, 0.08);">${s.luxuryLevel}</span></td>`).join('')}
               </tr>
               <tr>
                 <td class="feature-name">Home Service?</td>
                 ${salonsToCompare.map(s => `<td>${s.homeService ? '✅ Available' : '❌ Salon Only'}</td>`).join('')}
               </tr>
               <tr>
-                <td class="feature-name">Amenities</td>
+                <td class="feature-name">Services Offered</td>
                 ${salonsToCompare.map(s => `
                   <td>
-                    <div style="display:flex; flex-wrap:wrap; gap:5px;">
-                      ${s.amenities.map(a => `<span class="skill-tag" style="font-size:0.7rem; padding: 4px 8px;">${a}</span>`).join('')}
+                    <div style="display:flex; flex-direction:column; gap:6px; max-height:200px; overflow-y:auto; padding-right:5px;">
+                      ${s.services.map(ser => `
+                        <div style="font-size: 0.8rem; border-bottom: 1px dashed rgba(197,168,128,0.1); padding-bottom: 4px;">
+                          <strong>${ser.name}</strong><br>
+                          <span style="color: var(--accent-gold); font-size: 0.75rem;">₹${ser.price}</span>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </td>
+                `).join('')}
+              </tr>
+              <tr>
+                <td class="feature-name">Customer Reviews</td>
+                ${salonsToCompare.map(s => `
+                  <td>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <strong style="color: var(--text-main); font-size: 0.9rem;">${s.reviews.length}</strong>
+                      <span style="font-size:0.75rem; color:var(--text-muted);">verified review(s)</span>
                     </div>
                   </td>
                 `).join('')}
@@ -598,6 +641,82 @@ function renderCompareView() {
           </table>
         </div>
       `}
+    </div>
+  `
+}
+
+// ----------------------------------------------------
+// Near Me / Salon Finder View
+// ----------------------------------------------------
+function renderNearMeView() {
+  const searchVal = state.nearMeSearch || ''
+  
+  // Filter salons by search value matching name or location
+  const filtered = state.salons.filter(s => 
+    s.name.toLowerCase().includes(searchVal.toLowerCase()) || 
+    s.location.toLowerCase().includes(searchVal.toLowerCase())
+  )
+
+  return `
+    <div class="section-container near-me-container">
+      <div class="section-header">
+        <h4 class="section-subtitle">Interactive Finder</h4>
+        <h2 class="section-title">Find Salons Near You</h2>
+      </div>
+
+      <!-- Search Bar -->
+      <div class="search-bar-wrapper glass-panel" style="margin-bottom: 25px; padding: 15px;">
+        <div class="search-wrapper" style="width: 100%; max-width: 600px; margin: 0 auto;">
+          <input type="text" class="search-input" id="near-me-search" placeholder="Enter your area (e.g. Koramangala, Indiranagar, Jayanagar) or salon name..." value="${searchVal}">
+          <span class="search-icon">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          </span>
+        </div>
+      </div>
+
+      <!-- Split Layout -->
+      <div class="near-me-layout" id="near-me-layout">
+        <!-- Location Cards list -->
+        <div class="near-me-cards" id="near-me-cards">
+          ${filtered.length === 0 ? `
+            <div class="no-results glass-panel" style="padding: 40px; text-align: center; color: var(--text-muted);">
+              No salons found near "${searchVal}". Try searching "Koramangala", "Indiranagar", or "Whitefield".
+            </div>
+          ` : filtered.map(s => `
+            <div class="near-me-card glass-panel" data-salon-id="${s.id}" data-lat="${s.coordinates[0]}" data-lng="${s.coordinates[1]}">
+              <div class="near-me-card-header">
+                <div>
+                  <h3 class="near-me-salon-name">${s.name}</h3>
+                  <p class="near-me-salon-loc">${s.location} Area</p>
+                </div>
+                <div class="near-me-rating">
+                  ${icons.star}
+                  <span>${s.rating.toFixed(1)}</span>
+                </div>
+              </div>
+              <div class="near-me-meta">
+                <span>Category: <strong>${s.luxuryLevel}</strong></span> • 
+                <span>Price: <strong>${s.priceTier}</strong></span>
+              </div>
+              <div class="near-me-actions">
+                <a href="https://www.google.com/maps/dir/?api=1&destination=${s.coordinates[0]},${s.coordinates[1]}" target="_blank" class="btn-glass near-me-action-btn" style="text-align: center; display: flex; align-items: center; justify-content: center; text-decoration: none;">
+                  Get Directions
+                </a>
+                <button class="btn-primary near-me-action-btn btn-near-me-book" data-salon-id="${s.id}">
+                  Book Salon
+                </button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+
+        <!-- Sticky Map Column -->
+        <div class="near-me-map-container" id="near-me-map-col">
+          <div class="map-section" style="height: 100%; margin-bottom: 0;">
+            <div id="near-me-map" style="height: 100%; min-height: 450px; border-radius: 16px; border: 1px solid var(--glass-border); box-shadow: var(--shadow-gold);"></div>
+          </div>
+        </div>
+      </div>
     </div>
   `
 }
@@ -1222,6 +1341,58 @@ function initLeafletMap() {
   })
 }
 
+let nearMeMarkers = {}
+
+function initNearMeMap() {
+  if (leafletMap) {
+    leafletMap.remove()
+    leafletMap = null
+  }
+
+  const mapContainer = document.querySelector('#near-me-map')
+  if (!mapContainer) return
+
+  leafletMap = L.map('near-me-map', {
+    scrollWheelZoom: false
+  }).setView([12.964, 77.635], 11)
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+  }).addTo(leafletMap)
+
+  const goldIcon = L.divIcon({
+    className: 'custom-gold-marker',
+    html: `<div style="background-color: var(--accent-gold); width: 14px; height: 14px; border: 2.5px solid #000; border-radius: 50%; box-shadow: 0 0 12px var(--accent-gold);"></div>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 7]
+  })
+
+  nearMeMarkers = {}
+
+  const searchVal = state.nearMeSearch || ''
+  const filtered = state.salons.filter(s => 
+    s.name.toLowerCase().includes(searchVal.toLowerCase()) || 
+    s.location.toLowerCase().includes(searchVal.toLowerCase())
+  )
+
+  filtered.forEach(s => {
+    if (s.coordinates) {
+      const marker = L.marker(s.coordinates, { icon: goldIcon }).addTo(leafletMap)
+      
+      const popupHtml = `
+        <div style="padding: 5px;">
+          <h3>${s.name}</h3>
+          <p>${s.location} Area • ⭐ ${s.rating.toFixed(1)}</p>
+          <button class="btn-primary btn-map-explore" data-salon-id="${s.id}" style="width: 100%; border-radius: 20px; font-size: 0.7rem; padding: 5px 0; border: none; cursor: pointer; background: var(--accent-gold); color: #000; font-weight: bold;">Explore & Book</button>
+        </div>
+      `
+      
+      marker.bindPopup(popupHtml)
+      nearMeMarkers[s.id] = marker
+    }
+  })
+}
+
 // ----------------------------------------------------
 // Glassy grow-out-of-card animation implementation
 // ----------------------------------------------------
@@ -1350,44 +1521,116 @@ function closeGlassyModal() {
 // Chatbot Bot Processing Engine
 // ----------------------------------------------------
 function processChatbotQuery(query) {
-  const norm = query.toLowerCase()
+  const norm = query.toLowerCase().trim()
   let reply = ''
 
-  // Add User message
+  // Add User message and set typing state
   state.chatbotMessages.push({ sender: 'user', text: query })
+  state.isTyping = true
   renderApp()
   scrollChatToBottom()
 
-  // Match AI Response
+  // Match AI Response after simulated typing delay
   setTimeout(() => {
-    if (norm.includes('face') || norm.includes('shape') || norm.includes('round') || norm.includes('oval') || norm.includes('square')) {
-      reply = `Hairstyles should highlight your bone structure. For <strong>round face shapes</strong>, we recommend long textured layers, long shags, or a high-volume undercut by <strong>Aarav Mehta</strong>. For <strong>oval shapes</strong>, almost anything works—try Priya's <strong>Bespoke Balayage</strong>! If you have a <strong>square face</strong>, soft waves or wispy side fringes help soften angles.`
-    } else if (norm.includes('home') || norm.includes('at home') || norm.includes('visit') || norm.includes('doorstep')) {
-      reply = `We provide verified at-home styling services! Flagship salons offering <strong>Home Services</strong> are <strong>Aura Salon & Spa</strong> (Koramangala), <strong>The Royale Grooming</strong> (Whitefield), and <strong>Elixir Wellness</strong> (Sadashivanagar). You can <span class="chat-link" id="chat-link-home">start booking a home service here</span>.`
-    } else if (norm.includes('bridal') || norm.includes('wedding') || norm.includes('makeup')) {
-      reply = `For bridal couture and elaborate styling, <strong>Priya Sharma</strong> is our master colorist and styling specialist. She operating out of <strong>Aura Salon</strong> (Koramangala) and <strong>Vogue Artistry</strong> (Indiranagar). Her bridal services include Red Carpet designs starting at ₹2,500. <span class="chat-link" id="chat-link-priya">View Priya's profile and book here</span>.`
-    } else if (norm.includes('budget') || norm.includes('under') || norm.includes('₹') || norm.includes('cheap') || norm.includes('price')) {
+    // 1. Bridal Makeup Recommendations
+    if (norm.includes('bridal') || norm.includes('wedding') || norm.includes('makeup') || norm.includes('bride')) {
+      reply = `For bridal couture and elaborate wedding makeup, we highly recommend our master stylist and colorist <strong>Priya Sharma</strong>. Priya is trained in Paris and treats hair as a canvas to design breathtaking red carpet looks.<br><br>
+      <strong>Available Services:</strong><br>
+      • <em>Red Carpet / Bridal Hair Design</em> — ₹2,500 (60 mins)<br>
+      • <em>Couture Balayage & Styling</em> — ₹6,500 (150 mins)<br>
+      • <em>Luxury Global Hair Color</em> — ₹4,500 (90 mins)<br><br>
+      Priya operates out of <strong>Aura Salon & Spa</strong> (Koramangala) and <strong>Vogue Artistry</strong> (Indiranagar).<br><br>
+      👉 <span class="chat-link" data-action="view-stylist" data-id="priya-sharma">View Priya's Profile</span> or <span class="chat-link" data-action="view-salon" data-id="aura-koramangala">Book Aura Salon & Spa</span>.`
+    }
+    // 2. Hairstyles for Round, Oval, and Square Face Shapes
+    else if (norm.includes('face') || norm.includes('shape') || norm.includes('round') || norm.includes('oval') || norm.includes('square') || norm.includes('hairstyle') || norm.includes('haircut')) {
+      reply = `Hairstyles should always highlight your natural bone structure and soften angles:<br><br>
+      • <strong>Round Face Shapes</strong>: Long textured layers, deep side parts, textured shags, or a high-volume undercut by <strong>Aarav Mehta</strong>. These styles elongate the face and add visual structure.<br>
+      • <strong>Oval Face Shapes</strong>: The most versatile shape! You can carry off almost anything—try side-swept bangs, a blunt textured bob, or <strong>Priya Sharma's</strong> multi-dimensional <em>Couture Balayage</em> to perfectly frame your face.<br>
+      • <strong>Square Face Shapes</strong>: Soft wispy side fringes, long layers with soft waves, or textured bobs. These help soften the strong angles of the jawline.<br><br>
+      👉 <span class="chat-link" data-action="view-stylist" data-id="aarav-mehta">Book Aarav Mehta</span> or <span class="chat-link" data-action="view-stylist" data-id="priya-sharma">Book Priya Sharma</span>.`
+    }
+    // 3. Salon Suggestions Based on Budget
+    else if (norm.includes('budget') || norm.includes('under') || norm.includes('₹') || norm.includes('price') || norm.includes('cost') || norm.includes('cheap') || norm.includes('affordable')) {
       const numbers = norm.match(/\d+/g)
-      const maxVal = numbers ? Math.max(...numbers.map(Number)) : 2000
+      const maxVal = numbers ? Math.max(...numbers.map(Number)) : null
       
-      if (maxVal < 1500) {
-        reply = `For grooming under ₹1,500, we recommend booking a <strong>Classic Hot Towel Shave</strong> (₹700) or <strong>Beard Trim</strong> (₹600) with master barber <strong>Kabir Malhotra</strong> at <strong>The Royale Grooming</strong> (Whitefield).`
-      } else if (maxVal <= 3000) {
-        reply = `With a budget of ₹${maxVal.toLocaleString()}, you can book <strong>Bespoke Handpainted Gel Art</strong> (₹2,200) with <strong>Ananya Sen</strong> at <strong>Nail Couture</strong> (Jayanagar), or an <strong>Organic Essential Oil Hair Spa</strong> (₹2,800) with <strong>Meera Iyer</strong> at <strong>Elixir Wellness</strong> (Sadashivanagar).`
+      if (maxVal !== null) {
+        if (maxVal < 1000) {
+          reply = `With a budget under ₹${maxVal.toLocaleString()}, we recommend:<br>
+          • <strong>Luxury Beard Grooming & Trim</strong> (₹600) or <strong>Classic Hot Towel Shave</strong> (₹700) by master barber <strong>Kabir Malhotra</strong> at <em>The Royale Grooming</em> (Whitefield).<br><br>
+          👉 <span class="chat-link" data-action="view-salon" data-id="royale-whitefield">Book The Royale Grooming</span>.`
+        } else if (maxVal <= 2500) {
+          reply = `For a budget under ₹${maxVal.toLocaleString()}, you can experience:<br>
+          • <strong>Bespoke Handpainted Gel Art</strong> (₹2,200) or <strong>Luxurious Paraffin Hand & Arm Spa</strong> (₹1,500) by <strong>Ananya Sen</strong> at <em>Nail Couture & Lash Studio</em> (Jayanagar).<br>
+          • <strong>Royal Signature Haircut</strong> (₹1,500) by <strong>Aarav Mehta</strong> at <em>Aura Salon & Spa</em> (Koramangala).<br><br>
+          👉 <span class="chat-link" data-action="view-salon" data-id="nail-jayanagar">Book Nail Couture</span>.`
+        } else if (maxVal <= 4000) {
+          reply = `With a budget under ₹${maxVal.toLocaleString()}, we highly recommend:<br>
+          • <strong>Organic Essential Oil Hair Spa</strong> (₹2,800) or <strong>Anti-Hairfall Treatment Ritual</strong> (₹3,200) by <strong>Meera Iyer</strong> at <em>Elixir Wellness</em> (Sadashivanagar).<br>
+          • <strong>Gold Dust Dermal Glow Facial</strong> (₹4,000) or <strong>Hydra-Boost Intense Therapy</strong> (₹3,500) by skin specialist <strong>Vikram Singh</strong> at <em>Vogue Artistry</em> (Indiranagar).<br><br>
+          👉 <span class="chat-link" data-action="view-salon" data-id="vogue-indiranagar">Book Vogue Artistry</span> or <span class="chat-link" data-action="view-salon" data-id="elixir-sadashivanagar">Book Elixir Wellness</span>.`
+        } else {
+          reply = `For a budget of ₹${maxVal.toLocaleString()} and above, pamper yourself with ultra-luxury services:<br>
+          • <strong>Couture Balayage & Styling</strong> (₹6,500) or <strong>Luxury Global Hair Color</strong> (₹4,500) by <strong>Priya Sharma</strong> at <em>Aura Salon & Spa</em>.<br>
+          • <strong>Premium Russian Lash Extensions</strong> (₹4,500) by <strong>Ananya Sen</strong> at <em>Nail Couture & Lash Studio</em>.<br><br>
+          👉 <span class="chat-link" data-action="view-salon" data-id="aura-koramangala">Book Aura Salon & Spa</span>.`
+        }
       } else {
-        reply = `For budgets above ₹3,000, indulge in ultra-luxury facials like the <strong>Gold Dust Dermal Glow</strong> (₹4,000) by skin specialist <strong>Vikram Singh</strong> at <strong>Vogue Artistry</strong> (Indiranagar).`
+        reply = `We offer services across all pricing tiers to suit your budget:<br><br>
+        • <strong>Budget Friendly (₹)</strong>: <em>Nail Couture & Lash Studio</em> (Jayanagar). Gel nail art and hand spas starting at ₹1,500.<br>
+        • <strong>Premium (₹₹)</strong>: <em>Vogue Artistry</em> (Indiranagar). Skincare and bespoke coloring from ₹2,000 - ₹5,000.<br>
+        • <strong>Ultra Luxury (₹₹₹)</strong>: <em>Aura Salon & Spa</em> (Koramangala) & <em>The Royale Grooming</em> (Whitefield). Complete red carpet hair designs, private VIP cabins, valet parking, and complimentary champagne.<br><br>
+        👉 <span class="chat-link" data-action="view-view" data-id="salons">View All Salons</span>.`
       }
-    } else if (norm.includes('koramangala')) {
-      reply = `In Koramangala, we host <strong>Aura Salon & Spa</strong>. It has a stellar 4.9 rating and features specialties in Hair Sculpting & Couture Coloring. Amenities include champagne service and VIP lounges. <span class="chat-link" id="chat-link-aura">Book Aura Salon now</span>.`
-    } else {
-      reply = `I recommend starting with a complimentary skin & hair consultation with our specialist, <strong>Vikram Singh</strong>. He performs dermis analysis and scalp therapies at <strong>Vogue Artistry</strong> (Indiranagar) and <strong>The Royale Grooming</strong> (Whitefield). <span class="chat-link" id="chat-link-vikram">Book Vikram here</span>.`
+    }
+    // 4. Luxury Salon Recommendations by Location
+    else if (norm.includes('luxury') || norm.includes('salon') || norm.includes('locations') || norm.includes('location') || norm.includes('suggest') || norm.includes('place') || norm.includes('koramangala') || norm.includes('indiranagar') || norm.includes('whitefield') || norm.includes('jayanagar') || norm.includes('sadashivanagar')) {
+      reply = `Here are our elite luxury salon recommendations in Bangalore:<br><br>
+      • <strong>Koramangala</strong>: <em>Aura Salon & Spa</em> (4.9 ★). Focuses on couture haircuts and balayage by Aarav and Priya. Amenities: Valet parking, VIP Lounge, Complimentary Champagne.<br>
+      • <strong>Whitefield</strong>: <em>The Royale Grooming</em> (4.7 ★). Ultimate sanctuary for gentlemen. Highlights: Private cabins, therapeutic head massages, hot towel shaves by Kabir Malhotra. Amenities: Massage chairs.<br>
+      • <strong>Sadashivanagar</strong>: <em>Elixir Wellness</em> (4.9 ★). Known for organic scalp treatments and precision haircuts. Amenities: Steam & sauna access, Organic Tea Service.<br>
+      • <strong>Indiranagar</strong>: <em>Vogue Artistry</em> (4.8 ★). Skincare, balayage, and dermal glows. Amenities: Aroma therapy rooms, premium beverage bar.<br>
+      • <strong>Jayanagar</strong>: <em>Nail Couture & Lash Studio</em> (4.9 ★). The premier spot for nail art and Russian lashes. Amenities: Nail Bar Lounge.<br><br>
+      👉 Click a link above to book, or <span class="chat-link" data-action="view-view" data-id="salons">Explore All Locations on the Map</span>.`
+    }
+    // 5. Skin and Hair Care Suggestions
+    else if (norm.includes('skin') || norm.includes('hair') || norm.includes('spa') || norm.includes('care') || norm.includes('facial') || norm.includes('glow') || norm.includes('massage') || norm.includes('dandruff') || norm.includes('hairfall')) {
+      reply = `Revitalize your skin and hair with our specialized dermal and therapeutic rituals:<br><br>
+      <strong>Premium Skincare:</strong><br>
+      • <em>Gold Dust Dermal Glow Facial</em> (₹4,000) - 75 mins of intensive dermal sculpting by <strong>Vikram Singh</strong>.<br>
+      • <em>Hydra-Boost Intense Therapy</em> (₹3,500) - 60 mins of deep hydration.<br><br>
+      <strong>Premium Hair & Scalp Care:</strong><br>
+      • <em>Organic Essential Oil Hair Spa</em> (₹2,800) - 60 mins of deep conditioning and scalp massage by <strong>Meera Iyer</strong>.<br>
+      • <em>Anti-Hairfall Treatment Ritual</em> (₹3,200) - 75 mins targeted rebalancing.<br><br>
+      👉 <span class="chat-link" data-action="view-stylist" data-id="vikram-singh">Book Skincare (Vikram)</span> or <span class="chat-link" data-action="view-stylist" data-id="meera-iyer">Book Hair Spa (Meera)</span>.`
+    }
+    // 6. Home Service Recommendations
+    else if (norm.includes('home') || norm.includes('doorstep') || norm.includes('service') || norm.includes('at-home')) {
+      reply = `Yes, we offer premium at-home styling and grooming services! You can enjoy the elite salon experience in the comfort of your home.<br><br>
+      <strong>Home Service Providers:</strong><br>
+      • <strong>Aura Salon & Spa</strong> (Koramangala) - Hair sculpting, blowouts, styling.<br>
+      • <strong>The Royale Grooming</strong> (Whitefield) - Men's grooming, shaves, skin facials.<br>
+      • <strong>Elixir Wellness</strong> (Sadashivanagar) - Hair spas, therapeutic treatments.<br><br>
+      👉 <span class="chat-link" data-action="view-view" data-id="salons">Go to Salons and filter by Home Service</span>.`
+    }
+    // Default fallback
+    else {
+      reply = `Hello! I am Aura, your AI beauty concierge. I can assist you with:<br>
+      • <strong>Bridal Makeup</strong>: Discover elite wedding styling packages.<br>
+      • <strong>Hair Spa & Skincare</strong>: Custom therapies for hair and skin health.<br>
+      • <strong>Face Shape Cuts</strong>: Best hair silhouettes for your bone structure.<br>
+      • <strong>Luxury Salons</strong>: Explore locations, ratings, and exclusive amenities.<br>
+      • <strong>Budget friendly</strong> or <strong>Home Services</strong>.<br><br>
+      Feel free to ask a question, or use the quick suggestion buttons below!`
     }
 
     state.chatbotMessages.push({ sender: 'bot', text: reply })
     state.chatbotUnread = false
+    state.isTyping = false
     renderApp()
     scrollChatToBottom()
-  }, 800)
+  }, 1200)
 }
 
 function scrollChatToBottom() {
@@ -1522,6 +1765,15 @@ function attachGlobalEventListeners() {
   if (navSalons) {
     navSalons.addEventListener('click', () => {
       state.activeView = 'salons'
+      renderApp()
+      if (navLinks.classList.contains('open')) navLinks.classList.remove('open')
+    })
+  }
+
+  const navNearMe = document.querySelector('#nav-near-me')
+  if (navNearMe) {
+    navNearMe.addEventListener('click', () => {
+      state.activeView = 'near-me'
       renderApp()
       if (navLinks.classList.contains('open')) navLinks.classList.remove('open')
     })
@@ -1710,11 +1962,31 @@ function attachGlobalEventListeners() {
     })
   })
 
-  // Compare checkboxes
-  const compareCheckboxes = document.querySelectorAll('.compare-checkbox')
-  compareCheckboxes.forEach(cb => {
-    cb.addEventListener('change', () => {
-      const salonId = cb.getAttribute('data-salon-compare-id')
+  // Compare buttons on salon cards
+  const compareBtns = document.querySelectorAll('.btn-compare-card')
+  compareBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const salonId = btn.getAttribute('data-salon-compare-id')
+      toggleCompare(salonId)
+    })
+  })
+
+  // Clear all salons from comparison
+  const compareClearBtn = document.querySelector('#compare-clear-btn')
+  if (compareClearBtn) {
+    compareClearBtn.addEventListener('click', () => {
+      state.compareList = []
+      saveState('bl_compare', state.compareList)
+      renderApp()
+    })
+  }
+
+  // Remove individual salon from comparison
+  const removeCompareBtns = document.querySelectorAll('.remove-compare-btn')
+  removeCompareBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const salonId = btn.getAttribute('data-salon-id')
       toggleCompare(salonId)
     })
   })
@@ -1863,59 +2135,50 @@ function attachGlobalEventListeners() {
     })
   })
 
-  // Chatbot inline shortcuts navigation inside messages
-  const chatLinkHome = document.querySelector('#chat-link-home')
-  if (chatLinkHome) {
-    chatLinkHome.addEventListener('click', () => {
+  // Chatbot event delegation for inline actions inside messages
+  const chatLog = document.querySelector('#chatbot-chat-log')
+  if (chatLog) {
+    chatLog.addEventListener('click', (e) => {
+      const link = e.target.closest('.chat-link')
+      if (!link) return
+      
+      const action = link.getAttribute('data-action')
+      const id = link.getAttribute('data-id')
+      
+      // Close the chatbot panel first for a smooth transition
       state.chatbotOpen = false
-      state.activeView = 'salons'
-      state.filterHome = 'true'
-      renderApp()
-    })
-  }
-
-  const chatLinkPriya = document.querySelector('#chat-link-priya')
-  if (chatLinkPriya) {
-    chatLinkPriya.addEventListener('click', () => {
-      state.chatbotOpen = false
-      state.activeView = 'stylists'
-      renderApp()
-    })
-  }
-
-  const chatLinkAura = document.querySelector('#chat-link-aura')
-  if (chatLinkAura) {
-    chatLinkAura.addEventListener('click', () => {
-      state.chatbotOpen = false
-      const salon = state.salons.find(s => s.id === 'aura-koramangala')
-      if (salon) {
-        state.selectedSalon = salon
-        state.selectedStylist = null
-        state.selectedServices = []
-        state.currentStep = 0
-        state.modalType = 'booking'
-        state.isModalOpen = true
+      
+      if (action === 'view-stylist') {
+        const stylist = stylists.find(s => s.id === id)
+        const salon = state.salons.find(s => s.stylistIds.includes(id))
+        if (stylist && salon) {
+          state.selectedSalon = salon
+          state.selectedStylist = stylist
+          state.selectedServices = []
+          state.currentStep = 1 // Service selection step
+          state.modalType = 'booking'
+          state.isModalOpen = true
+          renderApp()
+          openGlassyModal(null)
+        }
+      } else if (action === 'view-salon') {
+        const salon = state.salons.find(s => s.id === id)
+        if (salon) {
+          state.selectedSalon = salon
+          state.selectedStylist = null
+          state.selectedServices = []
+          state.currentStep = 0 // Stylist selection step
+          state.modalType = 'booking'
+          state.isModalOpen = true
+          renderApp()
+          openGlassyModal(null)
+        }
+      } else if (action === 'view-view') {
+        state.activeView = id // e.g. 'salons'
+        if (id === 'salons') {
+          state.filterHome = 'false'
+        }
         renderApp()
-        openGlassyModal(null)
-      }
-    })
-  }
-
-  const chatLinkVikram = document.querySelector('#chat-link-vikram')
-  if (chatLinkVikram) {
-    chatLinkVikram.addEventListener('click', () => {
-      state.chatbotOpen = false
-      const stylist = stylists.find(s => s.id === 'vikram-singh')
-      const salon = state.salons.find(s => s.stylistIds.includes('vikram-singh'))
-      if (stylist && salon) {
-        state.selectedSalon = salon
-        state.selectedStylist = stylist
-        state.selectedServices = []
-        state.currentStep = 1
-        state.modalType = 'booking'
-        state.isModalOpen = true
-        renderApp()
-        openGlassyModal(null)
       }
     })
   }
@@ -2028,6 +2291,61 @@ function attachGlobalEventListeners() {
         state.bookings.splice(index, 1)
         saveState('bl_bookings', state.bookings)
         renderApp()
+      }
+    })
+  })
+
+  // Near Me section listeners
+  const nearMeSearch = document.querySelector('#near-me-search')
+  if (nearMeSearch) {
+    nearMeSearch.addEventListener('input', () => {
+      state.nearMeSearch = nearMeSearch.value
+      renderApp()
+      const inputEl = document.querySelector('#near-me-search')
+      if (inputEl) {
+        inputEl.focus()
+        inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length)
+      }
+    })
+  }
+
+  const nearMeCards = document.querySelectorAll('.near-me-card')
+  nearMeCards.forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('a') || e.target.closest('button')) return
+
+      const salonId = card.getAttribute('data-salon-id')
+      const lat = parseFloat(card.getAttribute('data-lat'))
+      const lng = parseFloat(card.getAttribute('data-lng'))
+
+      if (leafletMap && lat && lng) {
+        leafletMap.setView([lat, lng], 14, { animate: true })
+      }
+
+      const marker = nearMeMarkers[salonId]
+      if (marker) {
+        marker.openPopup()
+      }
+
+      nearMeCards.forEach(c => c.classList.remove('active'))
+      card.classList.add('active')
+    })
+  })
+
+  const nearMeBookBtns = document.querySelectorAll('.btn-near-me-book')
+  nearMeBookBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const salonId = btn.getAttribute('data-salon-id')
+      const salon = state.salons.find(s => s.id === salonId)
+      if (salon) {
+        state.selectedSalon = salon
+        state.selectedStylist = null
+        state.selectedServices = []
+        state.currentStep = 0
+        state.modalType = 'booking'
+        state.isModalOpen = true
+        renderApp()
+        openGlassyModal(btn)
       }
     })
   })
